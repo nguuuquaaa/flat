@@ -5,6 +5,7 @@ from . import error, utils, content
 import random
 import re
 import json
+import mimetypes
 
 #==================================================================================================================================================
 
@@ -27,6 +28,7 @@ else:
 
 #==================================================================================================================================================
 
+#straight up stolen from fbchat
 class GraphQL:
     FRAGMENT_USER = """
     QueryFragment User: User {
@@ -152,7 +154,7 @@ class GraphQL:
                 "query_params": params
             }
         else:
-            raise ValueError
+            raise ValueError("Need either query or doc_id.")
 
 #==================================================================================================================================================
 
@@ -169,8 +171,8 @@ class HTTPRequest:
     MARK_SEEN = "https://www.facebook.com/ajax/mercury/mark_seen.php"
     BASE = "https://www.facebook.com"
     MOBILE = "https://m.facebook.com/"
-    STICKY = "https://0-edge-chat.facebook.com/pull"
-    PING = "https://0-edge-chat.facebook.com/active_ping"
+    STICKY = "https://{}-edge-chat.facebook.com/pull"
+    PING = "https://{}-edge-chat.facebook.com/active_ping"
     UPLOAD = "https://upload.facebook.com/ajax/mercury/upload.php"
     INFO = "https://www.facebook.com/chat/user_info/"
     CONNECT = "https://www.facebook.com/ajax/add_friend/action.php?dpr=1"
@@ -191,18 +193,14 @@ class HTTPRequest:
     EVENT_REMINDER = "https://www.facebook.com/ajax/eventreminder/create"
     MODERN_SETTINGS_MENU = "https://www.facebook.com/bluebar/modern_settings_menu/"
     REMOVE_FRIEND = "https://m.facebook.com/a/removefriend.php"
+    EMBED_LINK = "https://www.facebook.com/message_share_attachment/fromURI/"
 
-    def __init__(self, username, password, *, loop=None, user_agent=None):
-        if username and password:
-            self.username = username
-            self.password = password
-        else:
-            raise error.LoginError("Username and password must be non-empty.")
+    def __init__(self, *, loop=None, user_agent=None):
         self.loop = loop or asyncio.get_event_loop()
         self.pull_channel = 0
         self.client = "mercury"
         self.headers = {
-            "Content-Type" : 'application/x-www-form-urlencoded',
+            "Content-Type" : "application/x-www-form-urlencoded",
             "Referer": self.BASE,
             "Origin": self.BASE,
             "User-Agent": user_agent or random.choice(USER_AGENTS),
@@ -216,7 +214,7 @@ class HTTPRequest:
         self.request_counter = 1
         self.seq = "0"
 
-    async def cleanup(self):
+    async def close(self):
         await self.session.close()
 
     def update_params(self, extra={}):
@@ -248,12 +246,18 @@ class HTTPRequest:
             else:
                 return bytes_
 
-    async def login(self):
+    async def login(self, username, password):
+        if username and password:
+            #self.username = username
+            #self.password = password
+            pass
+        else:
+            raise error.LoginError("Username and password must be non-empty.")
         bytes_ = await self.get(self.MOBILE)
         soup = BS(bytes_.decode("utf-8"), PARSER)
         data = {tag["name"]: tag["value"] for tag in soup.find_all("input") if "name" in tag.attrs and "value" in tag.attrs}
-        data["email"] = self.username
-        data["pass"] = self.password
+        data["email"] = username
+        data["pass"] = password
         data["login"] = "Log In"
 
         self.request_counter += 1
@@ -343,6 +347,13 @@ class HTTPRequest:
             m = re.search(r"name=\"fb_dtsg\"\svalue=\"(.?*)\"", r.text)
             self.fb_dtsg = m.group(1)
 
+        jazoest = soup.find("input", attrs={"name": "jazoest"})
+        if jazoest:
+            self.jazoest = jazoest["value"]
+        else:
+            m = re.search(r"name=\"jazoest\"\svalue=\"(.?*)\"", r.text)
+            self.jazoest = m.group(1)
+
         h = soup.find("input", attrs={"name": "h"})
         if h:
             self.h = h["value"]
@@ -355,6 +366,7 @@ class HTTPRequest:
         self.params["__a"] = "1"
         self.params["ttstamp"] = self.ttstamp
         self.params["fb_dtsg"] = self.fb_dtsg
+        self.params["jazoest"] = self.jazoest
 
         self.form = {
             "channel": self.user_channel,
@@ -397,11 +409,78 @@ class HTTPRequest:
         }
 
         data.update(dest.to_dict())
-        data.update(ctn.to_dict())
 
-        d = await self.post(self.SEND, data=data, as_json=True)
+        ctn_params= ctn.to_dict()
+        data.update(ctn_params)
+        separated_file_data = {}
+
+        attachments = ctn._attachments
+        if attachments:
+            count = {
+                "image": 0,
+                "audio": 0,
+                "video": 0,
+                "file": 0
+            }
+
+            for i, a in enumerate(attachments):
+                b, filename = a.read()
+                if not filename:
+                    filename = "file_" + str(i)
+                    content_type = None
+                else:
+                    content_type = mimetypes.guess_type(filename)[0]
+
+                params = self.update_params()
+                self.request_counter += 1
+
+                headers = self.headers.copy()
+                headers.pop("Content-Type")
+
+                file_payload = aiohttp.FormData()
+                file_payload.add_field("upload_1024", b, filename=filename, content_type=content_type)
+                resp = await self.session.post(
+                    self.UPLOAD,
+                    headers=headers,
+                    params=params,
+                    data=file_payload
+                )
+                ret = utils.load_broken_json(await resp.read())
+
+                info = ret["payload"]["metadata"][0]
+                for t, v in count.items():
+                    file_id = info.get(t+"_id")
+                    if file_id:
+                        data_for_this = separated_file_data.get(t, data.copy())
+                        data_for_this["{}_ids[{}]".format(t, v)] = file_id
+                        separated_file_data[t] = data_for_this
+                        count[t] = v + 1
+
+                #gif is a special image.... kind of
+                file_id = info.get("gif_id")
+                if file_id:
+                    data_for_this = separated_file_data.get("image", data.copy())
+                    data_for_this["gif_ids[{}]".format(count["image"])] = file_id
+                    separated_file_data["gif"] = data_for_this
+                    count["image"] += 1
+
+        url = ctn._url
+        if url:
+            url_data = {"uri": url, "image_height": 960, "image_width": 960}
+            ret = await self.post(self.EMBED_LINK, data=url_data, as_json=True)
+            share_data = ret["payload"]["share_data"]
+            data.update(utils.flatten(share_data, "shareable_attachment"))
+
         try:
-            return [m for m in d["payload"]["actions"] if m]
+            if separated_file_data:
+                ms = []
+                for s in separated_file_data.values():
+                    d = await self.post(self.SEND, data=s, as_json=True)
+                    ms.extend((m for m in d["payload"]["actions"] if m))
+                return ms
+            else:
+                d = await self.post(self.SEND, data=data, as_json=True)
+                return [m for m in d["payload"]["actions"] if m]
         except KeyError:
             #raise error.SendFailure("Facebook didn't return any message.")
             print(json.dumps(d, indent=4))
@@ -416,7 +495,7 @@ class HTTPRequest:
             "clientid": self.client_id
         }
 
-        d = await self.get(self.STICKY, params=params, as_json=True)
+        d = await self.get(self.STICKY.format(self.pull_channel), params=params, as_json=True)
 
         lb = d.get("lb_info")
         if lb:
@@ -437,7 +516,7 @@ class HTTPRequest:
             "viewer_uid": self.user_id,
             "state": "active"
         }
-        await self.get(self.PING, params=params)
+        await self.get(self.PING.format(self.pull_channel), params=params)
 
     async def pull(self):
         params = {
@@ -447,7 +526,7 @@ class HTTPRequest:
             "clientid": self.client_id,
         }
 
-        d = await self.get(self.STICKY, params=params, timeout=15, as_json=True)
+        d = await self.get(self.STICKY.format(self.pull_channel), params=params, timeout=15, as_json=True)
         self.seq = d.get("seq", "0")
 
         return d

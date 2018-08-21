@@ -25,7 +25,7 @@ class Message(base.Object):
 
     @property
     def attachments(self):
-        return self._attachments
+        return tuple(self._attachments)
 
     @property
     def mentions(self):

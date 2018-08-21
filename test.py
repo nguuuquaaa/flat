@@ -24,7 +24,7 @@ class Bot(flat.Client):
         if message.author.id == self.user.id:
             return
 
-        #echo text, mentions, bigmoji and sticker
+        #echo text, mentions, bigmoji, sticker and file
         ctn = flat.Content.from_message(message)
         await message.thread.send(ctn)
 

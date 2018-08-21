@@ -2,6 +2,7 @@ from . import attachment
 import enum
 import os
 import collections
+from io import BytesIO
 
 #==================================================================================================================================================
 
@@ -17,17 +18,17 @@ class File:
     def read(self):
         f = self.f
         if isinstance(f, str):
-            other, self.filename = os.path.split(f)
+            other, filename = os.path.split(f)
             with open(f, "rb") as fp:
-                return fp.read()
+                return fp.read(), filename
         else:
             try:
                 b = f.read()
             except AttributeError:
-                return f
+                return f, self.filename
             else:
-                self.filename = getattr(f, "name", self.filename)
-                return b
+                filename = getattr(f, "name", self.filename)
+                return b, filename
 
 #==================================================================================================================================================
 
@@ -39,6 +40,7 @@ class Content:
     def _clear(self):
         self._text = ""
         self._mentions = []
+        self._url = None
         self._emoji_size = None
         self._attachments = []
         self._sticker_id = None
@@ -50,6 +52,7 @@ class Content:
 
     def _clear_non_file(self):
         self._text = ""
+        self._url = None
         self._mentions = []
         self._emoji_size = None
         self._sticker_id = None
@@ -59,9 +62,12 @@ class Content:
         self._text += str(text)
         return self
 
-    def mention(self, user):
+    def mention(self, user, att="full_name"):
         self._clear_non_text()
-        t = user.full_name
+        if att in ("full_name", "first_name", "last_name", "alias", "nick"):
+            t = getattr(user, att)
+        else:
+            raise ValueError("Att is not accepted.")
         self._mentions.append(Mention(user, len(self._text), len(t)))
         self._text += t
         return self
@@ -69,10 +75,10 @@ class Content:
     def emoji(self, e, size="small"):
         self._clear()
         self._text = e
-        if size in ("big", "medium", "small"):
+        if size in ("large", "medium", "small"):
             self._emoji_size = size
         else:
-            raise ValueError("Emoji size must be either big, medium or small (lowercase).")
+            raise ValueError("Emoji size must be either large, medium or small (lowercase).")
         return self
 
     def attach(self, *fp):
@@ -85,10 +91,20 @@ class Content:
         self._sticker_id = sticker_id
         return self
 
+    def link(self, url):
+        if url.startswith(("https://", "http://")):
+            self._clear_non_text()
+            self._text += url
+            self._url = url
+            return self
+        else:
+            raise ValueError("This accepts url with http(s) scheme only.")
+
     def to_dict(self):
         data = {
             "action_type": "ma-type:user-generated-message",
-            "body": self._text
+            "body": self._text,
+            "has_attachment": "false"
         }
 
         for i, m in enumerate(self._mentions):
@@ -102,16 +118,24 @@ class Content:
 
         if self._sticker_id:
             data["sticker_id"] = self._sticker_id
+            data["has_attachment"] = "true"
+
+        if self._attachments:
+            data["has_attachment"] = "true"
 
         return data
 
     @classmethod
-    def from_message(cls, message):
+    async def from_message(cls, message):
         ctn = cls(message.text)
         ctn._mentions = message.mentions
         ctn._emoji_size = message.emoji_size
         for a in message.attachments:
             if isinstance(a, attachment.Sticker):
-                ctn.sticker(a._id)
+                ctn.sticker(a.id)
                 break
+            elif isinstance(a, attachment.FileAttachment):
+                b = BytesIO()
+                await a.save(b)
+                ctn.attach(File(b.getvalue(), a._filename))
         return ctn

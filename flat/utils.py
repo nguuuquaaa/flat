@@ -73,3 +73,49 @@ def get_jsmods_require(j, index):
             except (KeyError, IndexError):
                 pass
     return None
+
+def get_elem(container, pred, default=None):
+    if isinstance(pred, (int, str)):
+        try:
+            return container[pred]
+        except:
+            return default
+
+    elif callable(pred):
+        for item in container:
+            try:
+                is_true = pred(item)
+            except:
+                continue
+            else:
+                if is_true:
+                    return item
+        else:
+            return default
+
+def get_between(text, start, end):
+    parts = text.partition(start)
+    if parts[2]:
+        ret = parts[2].partition(end)
+        if ret[2]:
+            return ret[0]
+        else:
+            raise IndexError("Cannot find end token.")
+    else:
+        raise IndexError("Cannot find start token.")
+
+
+def flatten(data, prefix):
+    if isinstance(data, dict):
+        iterator = data.items()
+    elif isinstance(data, (list, tuple)):
+        iterator = enumerate(data)
+    else:
+        data = data or ""
+        return {prefix: data}
+
+    ret = {}
+    for key, value in iterator:
+        proc = flatten(value, "{}[{}]".format(prefix, key))
+        ret.update(proc)
+    return ret
