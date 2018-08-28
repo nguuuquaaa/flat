@@ -1,24 +1,167 @@
-from . import http, user, participant, thread, content, message, attachment
+from .user import *
+from .participant import *
+from .thread import *
+from .content import *
+from .message import *
+from .attachment import *
+from .error import *
 import collections
 import json
 import traceback
-
+import asyncio
+from datetime import datetime
+from yarl import URL
 
 class State:
     def __init__(self, *, loop, http, dispatch, max_messages):
         self.dispatch = dispatch
         self.http = http
-        self._max_messages = max_messages
+        self.max_messages = max_messages
+        self.client_user = None
         self.clear()
+        self.user_lock = asyncio.Lock()
+        self.thread_lock = asyncio.Lock()
+        self._job_queue = asyncio.Queue()
 
     def clear(self):
-        self._threads = {}
-        self._users = {}
-        self._participants = {}
-        self._messages = collections.deque(maxlen=self._max_messages)
+        self.threads = {}
+        self.users = {}
+        self.messages = collections.deque(maxlen=self.max_messages)
 
-    def process_post_messages(self, raw_messages):
-        return raw_messages
+    def _parse_user(self, user_id, data):
+        utype = data["type"]
+        if utype in ("user", "friend"):
+            u = User(
+                user_id,
+                state=self,
+                name=data["name"],
+                first_name=data["firstName"],
+                gender=data["gender"],
+                alias=data["alternateName"] or None,
+                thumbnail=data["thumbSrc"],
+                url=data["uri"],
+                is_friend=data["is_friend"]
+            )
+            return u
+        elif utype == "page":
+            p = Page(
+                user_id,
+                state=self,
+                name=data["name"],
+                category=data["gender"],
+                thumbnail=data["thumbSrc"],
+                url=data["url"]
+            )
+            return p
+        else:
+            raise UnexpectedResponse("Unknown user type: {}".format(ttype))
+
+    async def get_user(self, user_id):
+        async with self.user_lock:
+            try:
+                return self.users[user_id]
+            except KeyError:
+                pass
+            raw = await self.http.fetch_users(user_id)
+            data = raw[user_id]
+            u = self._parse_user(user_id, data)
+            self.users[user_id] = u
+            return u
+
+    async def fetch_client_user(self):
+        client_user_id = self.http.user_id
+        raw = await self.http.fetch_users(client_user_id)
+        data = raw[client_user_id]
+        u = ClientUser(
+            client_user_id,
+            state=self,
+            name=data["name"],
+            first_name=data["firstName"],
+            gender=data["gender"],
+            alias=data["alternateName"] or None,
+            thumbnail=data["thumbSrc"],
+            url=data["uri"]
+        )
+        self.client_user = u
+        self.users[client_user_id] = u
+        return u
+
+    async def get_users(self, user_ids):
+        async with self.user_lock:
+            need_to_fetch = [uid for uid in user_ids if uid not in self.users]
+            batch_data = await self.http.fetch_users(need_to_fetch)
+            users = self.users
+            for user_id, data in batch_data.items():
+                u = self._parse_user(user_id, data)
+                users[user_id] = u
+            return {uid: users[uid] for uid in user_ids}
+
+    async def get_thread(self, thread_id):
+        async with self.thread_lock:
+            try:
+                return self.threads[thread_id]
+            except KeyError:
+                pass
+            raw = await self.http.fetch_threads(thread_id)
+            data = raw[0]["data"]["message_thread"]
+            ttype = data["thread_type"]
+            client_user = self.client_user
+
+            customization = data["customization_info"]
+            nicks = {}
+            if customization:
+                emoji = customization["emoji"]
+                try:
+                    color = int(customization["outgoing_bubble_color"][2:], 16)
+                except:
+                    color = None
+
+                for pc in customization["participant_customizations"]:
+                    nicks[pc["participant_id"]] = pc["nickname"]
+            else:
+                emoji = None
+                color = None
+
+            if ttype == "ONE_TO_ONE":
+                user_thread_id = data["thread_key"]["other_user_id"]
+                other_user = await self.get_user(user_thread_id)
+
+                t = OneToOne(
+                    user_thread_id,
+                    state=self,
+                    emoji=emoji,
+                    color=color
+                )
+                t.store_recipient(other_user, nickname=nicks.get(user_thread_id))
+                t.store_me(nickname=nicks.get(client_user.id))
+                self.threads[user_thread_id] = t
+                return t
+
+            elif ttype == "GROUP":
+                thread_id = data["thread_key"]["thread_fbid"]
+                nodes = data["all_participants"]["nodes"]
+                all_participant_ids = [n["messaging_actor"]["id"] for n in nodes]
+                all_participants = self.get_users(all_participant_ids)
+
+                t = Group(
+                    thread_id,
+                    state=self,
+                    emoji=emoji,
+                    color=color,
+                    approval_mode=data["approval_mode"]
+                )
+
+                admins = [a["id"] for a in data["thread_admins"]]
+                for uid, u in all_participants:
+                    t.store_participant(u, admin=uid in admins, nickname=nicks.get(uid))
+                t.store_me()
+                self.threads[thread_id] = t
+                return t
+
+            else:
+                raise UnexpectedResponse("Unknown thread type: {}".format(ttype))
+
+            return cls.from_data(self, data)
 
     async def process_raw_data(self, raw_data):
         self.dispatch("raw_pull_data", raw_data)
@@ -64,7 +207,6 @@ class State:
                         await self.process_message(m)
                     except:
                         traceback.print_exc()
-                        print(json.dumps(m, indent=4))
 
 
             elif message_type == "inbox":
@@ -87,24 +229,6 @@ class State:
 
     def get_message_info(self, metadata):
         return metadata["messageId"], metadata["actorFbId"], int(metadata["timestamp"])
-
-    def get_thread(self, id, *, cls, **kwargs):
-        try:
-            th = self._threads[id]
-        except KeyError:
-            th = cls(id, state=self, partial=True, **kwargs)
-            self._threads[id] = th
-        finally:
-            return th
-
-    def get_user(self, id, *, cls, **kwargs):
-        try:
-            u = self._users[id]
-        except KeyError:
-            u = cls(id, state=self, partial=True, **kwargs)
-            self._users[id] = u
-        finally:
-            return u
 
     async def process_participants_add(self, raw_message):
         delta = raw_message["delta"]
@@ -145,115 +269,155 @@ class State:
         delta = raw_message["delta"]
         metadata = delta["messageMetadata"]
         mid = metadata["messageId"]
-        text = delta.get("body")
-        ts = int(metadata["timestamp"])
+        text = delta.get("body", "")
+        ts = datetime.fromtimestamp(int(metadata["timestamp"])/1000)
 
-        author_id = int(metadata["actorFbId"])
-        author_type = user.User
-        emoji_size = None
+        author_id = metadata["actorFbId"]
+        bigmoji = None
         for tag in metadata["tags"]:
-            if tag == "source:page_unified_inbox":
-                author_type = user.Page
-            elif tag.startswith("hot_emoji_size:"):
-                emoji_size = tag[15:]
-
+            if tag.startswith("hot_emoji_size:"):
+                bigmoji = Bigmoji(emoji=text, size=tag[15:])
+                text = ""
 
         thread_key = metadata["threadKey"]
         try:
             thread_id = thread_key["threadFbId"]
         except KeyError:
             thread_id = thread_key["otherUserFbId"]
-            thread_type = thread.OneToOne
-        else:
-            thread_type = thread.Group
         finally:
-            th = self.get_thread(thread_id, cls=thread_type)
+            thread = await self.get_thread(thread_id)
+            author = thread.get_participant(author_id)
 
-        attachments = []
+        files = []
+        sticker = None
+        embed_link = None
         if delta["attachments"]:
             for a in delta["attachments"]:
-                atm = await self._parse_attachment(a)
-                attachments.append(atm)
+                a = self._parse_attachment(a)
+                if isinstance(a, Sticker):
+                    sticker = a
+                    break
+                elif isinstance(a, EmbedLink):
+                    embed_link = a
+                    break
+                else:
+                    files.append(a)
 
+        mentions = []
         try:
             raw_mentions = json.loads(delta["data"]["prng"])
         except KeyError:
-            mentions = ()
+            pass
         else:
-            mentions = tuple(content.Mention(user=self.get_user(i["i"], cls=author_type), offset=i["o"], length=i["l"]) for i in raw_mentions)
+            for i in raw_mentions:
+                mentions.append(Mention(user=thread.get_participant(i["i"]), offset=i["o"], length=i["l"]))
 
-        m = message.Message(mid, state=self, author_id=author_id, thread=th, timestamp=ts, text=text, emoji_size=emoji_size, attachments=attachments, mentions=mentions)
+        m = Message(
+            mid, state=self, author=author, thread=thread, timestamp=ts,
+            text=text, bigmoji=bigmoji, sticker=sticker, embed_link=embed_link,
+            files=files, mentions=mentions
+        )
+        self.messages.append(m)
         self.dispatch("message", m)
 
-    async def _parse_attachment(self, a):
+    def _parse_attachment(self, a):
         mercury = a["mercury"]
         if "sticker_attachment" in mercury:
-            st = mercury["sticker_attachment"]
-            sid = int(st["id"])
-            label = st["label"]
-            width = st["width"]
-            height = st["height"]
-            column_count = st["frames_per_row"]
-            row_count = st["frames_per_column"]
-            frame_count = st["frame_count"]
-            frame_rate = st["frame_rate"]
-            preview_url = st["url"]
-            url = st.get("sprite_image_2x")
-
-            return attachment.Sticker(sid, label=label, url=url, preview_url=preview_url, column_count=column_count, row_count=row_count, frame_count=frame_count, frame_rate=frame_rate)
+            return self._parse_sticker(mercury["sticker_attachment"])
 
         elif "blob_attachment" in mercury:
-            bl = mercury["blob_attachment"]
-            aid = int(a["id"])
-            filename = a["filename"]
-            mimetype = a["mimeType"]
-            attachment_type = bl["__typename"]
+            return self._parse_file(mercury["blob_attachment"])
 
-            if attachment_type == "MessageImage":
-                cls = attachment.ImageAttachment
-                mt = a["imageMetadata"]
-                url = bl["large_preview"]["uri"]
-                kwargs = {
-                    "animated": False,
-                    "height": mt["height"],
-                    "width": mt["width"]
-                }
+        elif "extensible_attachment" in mercury:
+            return self._parse_embed_link(mercury["extensible_attachment"])
 
-            elif attachment_type == "MessageAnimatedImage":
-                cls = attachment.ImageAttachment
-                mt = a["imageMetadata"]
-                url = bl["animated_image"]["uri"]
-                kwargs = {
-                    "animated": True,
-                    "height": mt["height"],
-                    "width": mt["width"]
-                }
+    def _parse_sticker(self, node):
+        sid = node["id"]
+        label = node["label"]
+        width = node["width"]
+        height = node["height"]
+        column_count = node["frames_per_row"]
+        row_count = node["frames_per_column"]
+        frame_count = node["frame_count"]
+        frame_rate = node["frame_rate"]
+        preview_url = node["url"]
+        url = node.get("sprite_image_2x")
 
-            elif attachment_type == "MessageAudio":
-                cls = attachment.AudioAttachment
-                url = bl["playable_url"]
-                kwargs = {
-                    "duration": bl["playable_duration_in_ms"]
-                }
+        return Sticker(
+            sid, label=label, url=url, width=width, height=height, column_count=column_count,
+            row_count=row_count, frame_count=frame_count, frame_rate=frame_rate
+        )
 
-            elif attachment_type == "MessageVideo":
-                cls = attachment.VideoAttachment
-                mt = a["imageMetadata"]
-                url = bl["playable_url"]
-                kwargs = {
-                    "duration": bl["playable_duration_in_ms"],
-                    "height": mt["height"],
-                    "width": mt["width"]
-                }
+    def _parse_file(self, node):
+        aid = node["legacy_attachment_id"]
+        attachment_type = node["__typename"]
+        filename = utils.may_has_extension(node["filename"])
 
+        if attachment_type == "MessageImage":
+            cls = ImageAttachment
+            xy = node["original_dimensions"]
+            url = None
+            kwargs = {
+                "animated": False,
+                "height": xy["y"],
+                "width": xy["x"]
+            }
+
+        elif attachment_type == "MessageAnimatedImage":
+            cls = ImageAttachment
+            xy = node["original_dimensions"]
+            url = node["animated_image"]["uri"]
+            kwargs = {
+                "animated": True,
+                "height": xy["y"],
+                "width": xy["x"]
+            }
+
+        elif attachment_type == "MessageAudio":
+            cls = AudioAttachment
+            url = node["playable_url"]
+            kwargs = {
+                "duration": node["playable_duration_in_ms"]
+            }
+
+        elif attachment_type == "MessageVideo":
+            cls = VideoAttachment
+            xy = node["original_dimensions"]
+            url = node["playable_url"]
+            kwargs = {
+                "duration": node["playable_duration_in_ms"],
+                "height": xy["y"],
+                "width": xy["x"]
+            }
+
+        else:
+            cls = FileAttachment
+            url = node.get("url")
+            kwargs = {}
+
+        return cls(aid, state=self, filename=filename, url=url, **kwargs)
+
+    def _parse_embed_link(self, node):
+        eid = node["legacy_attachment_id"]
+        story = node["story_attachment"]
+        desc = story["description"]["text"]
+        title = story["title_with_entities"]["text"]
+        url = URL(story["url"]).query.get("u")
+        media = story["media"]
+        if media:
+            media_url = media["animated_image"]
+            if media_url:
+                media_url = media_url["uri"]
             else:
-                cls = attachment.FileAttachment
-                url = bl.get("url")
-                kwargs = {}
+                media_url = media["playable_url"]
+                if not media_url:
+                    media_url = media["image"]
+                    if media_url:
+                        media_url = media_url["uri"]
+        else:
+            media_url = None
 
-            kwargs["size"] = int(a.get("fileSize", -1))
-
-            return cls(aid, state=self, filename=filename, mimetype=mimetype, url=url, **kwargs)
+        return EmbedLink(eid, url=url, title=title, description=desc, media_url=media_url)
 
     async def process_inbox(self, m):
         pass
@@ -272,4 +436,56 @@ class State:
 
     async def process_unknown_message(self, m):
         pass
+
+    def get_send_message(self, data, content):
+        messages = []
+        mid = data["message_id"]
+        thread_id = data["thread_fbid"] or data["other_user_fbid"]
+        thread = self.threads[thread_id]
+        author = thread.get_participant(self.client_user.id)
+        ts = datetime.fromtimestamp(data["timestamp"]/1000)
+
+        bigmoji = content._bigmoji
+
+        files = []
+        sticker = None
+        embed_link = None
+        if data["graphql_payload"]:
+            for item in data["graphql_payload"]:
+                node = item["node"]
+                attachment_type = node["__typename"]
+                if attachment_type == "ExtensibleMessageAttachment":
+                    embed_link = self._parse_embed_link(node)
+                    break
+                elif attachment_type == "Sticker":
+                    sticker = self._parse_sticker(node)
+                    break
+                else:
+                    files.append(self._parse_file(node))
+
+        if files or sticker:
+            return Message(
+                mid, state=self, author=author, thread=thread, timestamp=ts,
+                text="", bigmoji=None, sticker=sticker, embed_link=None,
+                files=files, mentions=[]
+            )
+
+        elif bigmoji:
+            return Message(
+                mid, state=self, author=author, thread=thread, timestamp=ts,
+                text="", bigmoji=bigmoji, sticker=None, embed_link=None,
+                files=[], mentions=[]
+            )
+
+        else:
+            text = content._text
+            mentions = []
+            for m in content._mentions:
+                mentions.append(Mention(user=thread.get_participant(m.user.id), offset=m.offset, length=m.length))
+            return Message(
+                mid, state=self, author=author, thread=thread, timestamp=ts,
+                text=text, bigmoji=None, sticker=None, embed_link=embed_link,
+                files=[], mentions=[]
+            )
+
 

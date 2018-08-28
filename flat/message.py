@@ -1,15 +1,16 @@
-from . import base, thread, user
+from .base import *
+from .thread import *
+from .user import *
 from datetime import datetime
+
+__all__ = ("Message",)
 
 #==================================================================================================================================================
 
-class Message(base.Object):
+class Message(Object):
     @property
     def author(self):
-        if isinstance(self._thread, thread.OneToOne):
-            return self._state.get_user(self._author_id, cls=user.User)
-        else:
-            return self._thread.get_participant(self._author_id)
+        return self._author
 
     @property
     def thread(self):
@@ -17,20 +18,28 @@ class Message(base.Object):
 
     @property
     def timestamp(self):
-        return datetime.fromtimestamp(self._timestamp/1000)
+        return self._timestamp
 
     @property
     def text(self):
         return self._text
 
     @property
-    def attachments(self):
-        return tuple(self._attachments)
+    def bigmoji(self):
+        return self._bigmoji
+
+    @property
+    def files(self):
+        return tuple(self._files)
+
+    @property
+    def sticker(self):
+        return self._sticker
+
+    @property
+    def embed_link(self):
+        return self._embed_link
 
     @property
     def mentions(self):
         return self._mentions
-
-    @property
-    def emoji_size(self):
-        return self._emoji_size

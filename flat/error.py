@@ -1,5 +1,3 @@
-
-
 #==================================================================================================================================================
 
 class FBException(Exception):
@@ -17,8 +15,18 @@ class FBException(Exception):
 class HTTPException(FBException):
     pass
 
+class HTTPRequestFailure(HTTPException):
+    def __init__(self, response):
+        self.response = response
+        self.message = "Request failed. Got response status {}.".format(response.status)
+
 class LoginError(HTTPException):
     pass
 
 class SendFailure(HTTPException):
     pass
+
+class UnexpectedResponse(HTTPException):
+    pass
+
+#==================================================================================================================================================

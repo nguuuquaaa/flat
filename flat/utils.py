@@ -63,16 +63,11 @@ def strip_to_json(s):
 def load_broken_json(b):
     return json.loads(strip_to_json(b.decode("utf-8")))
 
-def get_jsmods_require(j, index):
-    jsmods = j.get("jsmods")
-    if jsmods:
-        rq = jsmods.get("require")
-        if rq:
-            try:
-                return rq[0][index][0]
-            except (KeyError, IndexError):
-                pass
-    return None
+def get_jsmods_require(d, index, default=None):
+    try:
+        return d["jsmods"]["require"][0][index][0]
+    except (KeyError, IndexError):
+        return default
 
 def get_elem(container, pred, default=None):
     if isinstance(pred, (int, str)):
@@ -93,6 +88,9 @@ def get_elem(container, pred, default=None):
         else:
             return default
 
+    else:
+        raise TypeError("Predicate must be eiter an int, a str or a callable.")
+
 def get_between(text, start, end):
     parts = text.partition(start)
     if parts[2]:
@@ -103,7 +101,6 @@ def get_between(text, start, end):
             raise IndexError("Cannot find end token.")
     else:
         raise IndexError("Cannot find start token.")
-
 
 def flatten(data, prefix):
     if isinstance(data, dict):
@@ -119,3 +116,10 @@ def flatten(data, prefix):
         proc = flatten(value, "{}[{}]".format(prefix, key))
         ret.update(proc)
     return ret
+
+def may_has_extension(filename):
+    if filename.partition(".")[1]:
+        return filename
+    else:
+        ext, hyph, name = filename.partition("-")
+        return name + "." + ext

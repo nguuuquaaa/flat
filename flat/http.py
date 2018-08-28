@@ -1,7 +1,9 @@
 import aiohttp
 import asyncio
 from bs4 import BeautifulSoup as BS
-from . import error, utils, content
+from .error import *
+from .content import *
+from . import utils
 import random
 import re
 import json
@@ -140,24 +142,37 @@ class GraphQL:
     }
     """ + FRAGMENT_USER + FRAGMENT_GROUP + FRAGMENT_PAGE
 
-    @classmethod
-    def get_query_data(cls, *, query={}, params={}, doc_id=None):
+    def __init__(self, *, query={}, params={}, doc_id=None):
         if query:
-            return {
+            self.value = {
                 "priority": 0,
                 "q": query,
                 "query_params": params
             }
         elif doc_id:
-            return {
+            self.value = {
                 "doc_id": doc_id,
                 "query_params": params
             }
         else:
             raise ValueError("Need either query or doc_id.")
 
+    @classmethod
+    def fetch_thread_info(cls, thread_id):
+        return cls(
+            doc_id="1386147188135407",
+            params={
+                "id": thread_id,
+                "message_limit": 0,
+                "load_messages": False,
+                "load_read_receipts": False,
+                "before": None
+            }
+        )
+
 #==================================================================================================================================================
 
+#partially stolen from fbchat, and converted to aiohttp
 class HTTPRequest:
     SEARCH = "https://www.facebook.com/ajax/typeahead/search.php"
     LOGIN = "https://m.facebook.com/login.php?login_attempt=1"
@@ -174,7 +189,7 @@ class HTTPRequest:
     STICKY = "https://{}-edge-chat.facebook.com/pull"
     PING = "https://{}-edge-chat.facebook.com/active_ping"
     UPLOAD = "https://upload.facebook.com/ajax/mercury/upload.php"
-    INFO = "https://www.facebook.com/chat/user_info/"
+    USER_INFO = "https://www.facebook.com/chat/user_info/"
     CONNECT = "https://www.facebook.com/ajax/add_friend/action.php?dpr=1"
     REMOVE_USER = "https://www.facebook.com/chat/remove_participants/"
     LOGOUT = "https://www.facebook.com/logout.php"
@@ -186,6 +201,7 @@ class HTTPRequest:
     THREAD_EMOJI = "https://www.facebook.com/messaging/save_thread_emoji/?source=thread_settings&dpr=1"
     THREAD_IMAGE = "https://www.facebook.com/messaging/set_thread_image/?dpr=1"
     THREAD_NAME = "https://www.facebook.com/messaging/set_thread_name/?dpr=1"
+    WEBGRAPHQL = "https://www.facebook.com/webgraphql/query/"
     MESSAGE_REACTION = "https://www.facebook.com/webgraphql/mutation"
     TYPING = "https://www.facebook.com/ajax/messaging/typ.php"
     GRAPHQL = "https://www.facebook.com/api/graphqlbatch/"
@@ -203,10 +219,13 @@ class HTTPRequest:
             "Content-Type" : "application/x-www-form-urlencoded",
             "Referer": self.BASE,
             "Origin": self.BASE,
-            "User-Agent": user_agent or random.choice(USER_AGENTS),
+            "User-Agent": user_agent or USER_AGENTS[0],
             "Connection": "keep-alive",
         }
         self.clear()
+
+    def change_pull_channel(self):
+        self.pull_channel = (self.pull_channel + 1) % 6
 
     def clear(self):
         self.session = aiohttp.ClientSession(loop=self.loop)
@@ -222,13 +241,15 @@ class HTTPRequest:
         params["__req"] = utils.str_base(self.request_counter)
         params["seq"] = self.seq
         params.update(extra)
+        self.request_counter += 1
         return params
 
     async def get(self, url, *, headers=None, params=None, timeout=30, as_json=False, json_decoder=utils.load_broken_json, **kwargs):
         headers = headers or self.headers
         params = self.update_params(params or {})
-        self.request_counter += 1
         async with self.session.get(url, headers=headers, params=params, timeout=timeout, **kwargs) as response:
+            if response.status != 200:
+                raise HTTPRequestFailure(response)
             bytes_ = await response.read()
             if as_json:
                 return json_decoder(bytes_)
@@ -238,8 +259,9 @@ class HTTPRequest:
     async def post(self, url, *, headers=None, data=None, timeout=30, as_json=False, json_decoder=utils.load_broken_json, **kwargs):
         headers = headers or self.headers
         data = self.update_params(data or {})
-        self.request_counter += 1
         async with self.session.post(url, headers=headers, data=data, timeout=timeout, **kwargs) as response:
+            if response.status != 200:
+                raise HTTPRequestFailure(response)
             bytes_ = await response.read()
             if as_json:
                 return json_decoder(bytes_)
@@ -327,11 +349,11 @@ class HTTPRequest:
         self.start_time = utils.now()
         for cookie in self.session.cookie_jar:
             if cookie.key == "c_user":
-                self.user_id = int(cookie.value)
+                self.user_id = cookie.value
                 break
         else:
             raise error.LoginError("Cannot find c_user cookie.")
-        self.user_channel = "p_" + str(self.user_id)
+        self.user_channel = "p_" + self.user_id
         self.ttstamp = ""
 
         bytes_ = await self.get(self.BASE)
@@ -395,8 +417,8 @@ class HTTPRequest:
         await self.get(self.LOGOUT, params={"ref": "mb", "h": self.h})
 
     async def send_message(self, dest, ctn):
-        if not isinstance(ctn, content.Content):
-            ctn = content.Content(ctn)
+        if not isinstance(ctn, Content):
+            ctn = Content(ctn)
         otid = utils.generate_offline_threading_id()
         data = {
             "client": self.client,
@@ -409,84 +431,47 @@ class HTTPRequest:
         }
 
         data.update(dest.to_dict())
+        send_data = await ctn.to_dict(self)
 
-        ctn_params= ctn.to_dict()
-        data.update(ctn_params)
-        separated_file_data = {}
+        ms = []
+        for sd in send_data:
+            sd.update(data)
+            d = await self.post(self.SEND, data=sd, as_json=True)
+            ms.extend((m for m in d["payload"]["actions"] if m))
+        return ms
 
-        attachments = ctn._attachments
-        if attachments:
-            count = {
-                "image": 0,
-                "audio": 0,
-                "video": 0,
-                "file": 0
-            }
+    async def fetch_embed_data(self, url):
+        ret = await self.post(
+            self.EMBED_LINK,
+            data={"uri": url, "image_height": 960, "image_width": 960},
+            as_json=True
+        )
+        share_data = ret["payload"]["share_data"]
+        return utils.flatten(share_data, "shareable_attachment")
 
-            for i, a in enumerate(attachments):
-                b, filename = a.read()
-                if not filename:
-                    filename = "file_" + str(i)
-                    content_type = None
-                else:
-                    content_type = mimetypes.guess_type(filename)[0]
+    async def upload_file(self, f):
+        b, filename = f.read()
+        if not filename:
+            filename = "file_" + str(i)
+            content_type = None
+        else:
+            content_type = mimetypes.guess_type(filename)[0]
 
-                params = self.update_params()
-                self.request_counter += 1
+        params = self.update_params()
+        headers = self.headers.copy()
+        headers.pop("Content-Type")
 
-                headers = self.headers.copy()
-                headers.pop("Content-Type")
+        file_payload = aiohttp.FormData()
+        file_payload.add_field("upload_1024", b, filename=filename, content_type=content_type)
+        resp = await self.session.post(
+            self.UPLOAD,
+            headers=headers,
+            params=params,
+            data=file_payload
+        )
 
-                file_payload = aiohttp.FormData()
-                file_payload.add_field("upload_1024", b, filename=filename, content_type=content_type)
-                resp = await self.session.post(
-                    self.UPLOAD,
-                    headers=headers,
-                    params=params,
-                    data=file_payload
-                )
-                ret = utils.load_broken_json(await resp.read())
-
-                info = ret["payload"]["metadata"][0]
-                for t, v in count.items():
-                    file_id = info.get(t+"_id")
-                    if file_id:
-                        data_for_this = separated_file_data.get(t, data.copy())
-                        data_for_this["{}_ids[{}]".format(t, v)] = file_id
-                        separated_file_data[t] = data_for_this
-                        count[t] = v + 1
-
-                #gif is a special image.... kind of
-                file_id = info.get("gif_id")
-                if file_id:
-                    data_for_this = separated_file_data.get("image", data.copy())
-                    data_for_this["gif_ids[{}]".format(count["image"])] = file_id
-                    separated_file_data["gif"] = data_for_this
-                    count["image"] += 1
-
-        url = ctn._url
-        if url:
-            url_data = {"uri": url, "image_height": 960, "image_width": 960}
-            ret = await self.post(self.EMBED_LINK, data=url_data, as_json=True)
-            share_data = ret["payload"]["share_data"]
-            data.update(utils.flatten(share_data, "shareable_attachment"))
-
-        try:
-            if separated_file_data:
-                ms = []
-                for s in separated_file_data.values():
-                    d = await self.post(self.SEND, data=s, as_json=True)
-                    ms.extend((m for m in d["payload"]["actions"] if m))
-                return ms
-            else:
-                d = await self.post(self.SEND, data=data, as_json=True)
-                return [m for m in d["payload"]["actions"] if m]
-        except KeyError:
-            #raise error.SendFailure("Facebook didn't return any message.")
-            print(json.dumps(d, indent=4))
-
-    async def graphql_request(self, data):
-        return await self.post(self.GRAPHQL, data=data, as_json=True, json_decoder=utils.load_concat_json)
+        ret = utils.load_broken_json(await resp.read())
+        return ret["payload"]["metadata"][0]
 
     async def fetch_sticky(self):
         params = {
@@ -516,7 +501,7 @@ class HTTPRequest:
             "viewer_uid": self.user_id,
             "state": "active"
         }
-        await self.get(self.PING.format(self.pull_channel), params=params)
+        return await self.get(self.PING.format(self.pull_channel), params=params)
 
     async def pull(self):
         params = {
@@ -530,4 +515,40 @@ class HTTPRequest:
         self.seq = d.get("seq", "0")
 
         return d
+
+    async def fetch_image_url(self, image_id):
+        data = await self.get(self.ATTACHMENT_PHOTO, params={"photo_id": image_id}, as_json=True)
+        url = utils.get_jsmods_require(data, 3)
+        if url:
+            return url
+        else:
+            raise UnexpectedResponse("Cannot find image url.")
+
+    async def graphql_request(self, *queries):
+        data = {}
+        for i, query in enumerate(queries):
+            data["q{}".format(i)] = query.value
+        d = {
+            "method": "GET",
+            "response_format": "json",
+            "queries": json.dumps(data)
+        }
+        batch = await self.post(self.GRAPHQL, data=d, as_json=True, json_decoder=utils.load_concat_json)
+        return batch
+
+    async def fetch_threads(self, *thread_ids):
+        queries = []
+        for tid in thread_ids:
+            queries.append(GraphQL.fetch_thread_info(tid))
+
+        ret = await self.graphql_request(*queries)
+        return list(ret[0].values())
+
+    async def fetch_users(self, *user_ids):
+        queries = {
+            "ids[{}]".format(i): uid for i, uid in enumerate(user_ids)
+        }
+
+        data = await self.post(self.USER_INFO, data=queries, as_json=True)
+        return data["payload"]["profiles"]
 

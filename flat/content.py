@@ -1,12 +1,16 @@
-from . import attachment
 import enum
 import os
 import collections
 from io import BytesIO
+import mimetypes
+
+__all__ = ("File", "Content")
 
 #==================================================================================================================================================
 
 Mention = collections.namedtuple("Mention", "user offset length")
+
+Bigmoji = collections.namedtuple("Bigmoji", "emoji size")
 
 #==================================================================================================================================================
 
@@ -40,31 +44,17 @@ class Content:
     def _clear(self):
         self._text = ""
         self._mentions = []
-        self._url = None
-        self._emoji_size = None
-        self._attachments = []
-        self._sticker_id = None
-
-    def _clear_non_text(self):
-        self._emoji_size = None
-        self._attachments = []
-        self._sticker_id = None
-
-    def _clear_non_file(self):
-        self._text = ""
-        self._url = None
-        self._mentions = []
-        self._emoji_size = None
+        self._embed_url = None
+        self._bigmoji = None
+        self._files = []
         self._sticker_id = None
 
     def write(self, text):
-        self._clear_non_text()
         self._text += str(text)
         return self
 
-    def mention(self, user, att="full_name"):
-        self._clear_non_text()
-        if att in ("full_name", "first_name", "last_name", "alias", "nick"):
+    def mention(self, user, att="name"):
+        if att in ("name", "full_name", "first_name", "alias", "nickname"):
             t = getattr(user, att)
         else:
             raise ValueError("Att is not accepted.")
@@ -72,56 +62,94 @@ class Content:
         self._text += t
         return self
 
-    def emoji(self, e, size="small"):
-        self._clear()
-        self._text = e
+    def bigmoji(self, emoji, size="small"):
         if size in ("large", "medium", "small"):
-            self._emoji_size = size
+            self._bigmoji = Bigmoji(emoji=e, size=size)
         else:
             raise ValueError("Emoji size must be either large, medium or small (lowercase).")
         return self
 
-    def attach(self, *fp):
-        self._clear_non_file()
-        self._attachments.extend(f for f in fp if isinstance(f, File))
+    def attach_file(self, *fp):
+        self._files.extend(f for f in fp if isinstance(f, File))
         return self
 
     def sticker(self, sticker_id):
-        self._clear()
         self._sticker_id = sticker_id
         return self
 
-    def link(self, url):
+    def embed(self, url, *, append=True):
         if url.startswith(("https://", "http://")):
-            self._clear_non_text()
-            self._text += url
-            self._url = url
+            if append:
+                self._text += url
+            self._embed_url = url
             return self
         else:
             raise ValueError("This accepts url with http(s) scheme only.")
 
-    def to_dict(self):
-        data = {
+    async def to_dict(self, http):
+        base = {
             "action_type": "ma-type:user-generated-message",
-            "body": self._text,
-            "has_attachment": "false"
+            "body": ""
         }
 
-        for i, m in enumerate(self._mentions):
-            data["profile_xmd[{}][id]".format(i)] = m.user.id
-            data["profile_xmd[{}][offset]".format(i)] = m.offset
-            data["profile_xmd[{}][length]".format(i)] = m.length
-            data["profile_xmd[{}][type]".format(i)] = "p"
+        data = []
 
-        if self._emoji_size is not None:
-            data["tags[0]"] = "hot_emoji_size:" + self._emoji_size
+        if self._text or self._mentions or self._embed_url:
+            cur = base.copy()
+            cur["body"] = self._text
+
+            for i, m in enumerate(self._mentions):
+                cur["profile_xmd[{}][id]".format(i)] = m.user.id
+                cur["profile_xmd[{}][offset]".format(i)] = m.offset
+                cur["profile_xmd[{}][length]".format(i)] = m.length
+                cur["profile_xmd[{}][type]".format(i)] = "p"
+
+            if self._embed_url:
+                d = await http.fetch_embed_data(self._embed_url)
+                cur.update(d)
+
+            data.append(cur)
+
+        if self._bigmoji:
+            cur = base.copy()
+            cur["body"] = self._bigmoji.emoji
+            cur["tags[0]"] = "hot_emoji_size:" + self._bigmoji.size
+            data.append(cur)
 
         if self._sticker_id:
-            data["sticker_id"] = self._sticker_id
-            data["has_attachment"] = "true"
+            cur = base.copy()
+            cur["sticker_id"] = self._sticker_id
+            cur["has_attachment"] = "true"
+            data.append(cur)
 
-        if self._attachments:
-            data["has_attachment"] = "true"
+        if self._files:
+            cur = []
+            cur["has_attachment"] = "true"
+
+            count = {
+                "image": 0,
+                "gif": 0,
+                "audio": 0,
+                "video": 0,
+                "file": 0
+            }
+
+            for i, f in enumerate(self._files):
+                d = await http.upload_file(f)
+
+                for t in count.items():
+                    file_id = d.get(t+"_id")
+                    if file_id:
+                        data_for_this = cur.get(t, base.copy())
+                        if t in ("image", "gif"):
+                            c = count["image"] + count["gif"]
+                        else:
+                            c = count[t]
+                        data_for_this["{}_ids[{}]".format(t, c)] = file_id
+                        cur[t] = data_for_this
+                        count[t] = v + 1
+
+            data.extend(cur)
 
         return data
 
@@ -129,13 +157,14 @@ class Content:
     async def from_message(cls, message):
         ctn = cls(message.text)
         ctn._mentions = message.mentions
-        ctn._emoji_size = message.emoji_size
-        for a in message.attachments:
-            if isinstance(a, attachment.Sticker):
-                ctn.sticker(a.id)
-                break
-            elif isinstance(a, attachment.FileAttachment):
-                b = BytesIO()
-                await a.save(b)
-                ctn.attach(File(b.getvalue(), a._filename))
+        if message.bigmoji:
+            ctn.bigmoji(message.bigmoji.id, size=message.bigmoji.size)
+        if message.sticker:
+            ctn.sticker(message.sticker.id)
+        if message.embed_link:
+            ctn.embed(message.embed_link.url, append=False)
+        for f in message.files:
+            b = BytesIO()
+            await f.save(b)
+            ctn.attach(File(b.getvalue(), f.filename))
         return ctn

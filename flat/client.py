@@ -1,4 +1,6 @@
-from . import http, state, user
+from .http import HTTPRequest
+from .state import State
+from .error import *
 import asyncio
 import traceback
 import inspect
@@ -6,6 +8,9 @@ import sys
 import logging
 
 log = logging.getLogger(__name__)
+
+def _always_true(*args):
+    return True
 
 #==================================================================================================================================================
 
@@ -75,10 +80,55 @@ class Client:
                 pass
 
     async def on_error(self, event, *args):
-        print("Ignoring exception in {}\n{}".format(event, traceback.format_exc()), file=sys.stderr)
+        etype, e, etb = sys.exc_info()
+        prt_err = "".join(traceback.format_exception(etype, e, etb))
+        print("Ignoring exception in {}\n{}".format(event, prt_err), file=sys.stderr)
 
     def is_running(self):
         return not self._closed.is_set()
+
+    async def start(self, email, password):
+        self.dispatch("start")
+        self._closed.clear()
+        self._http = HTTPRequest(loop=self.loop)
+        self._state = State(loop=self.loop, http=self._http, dispatch=self.dispatch, max_messages=self._max_messages)
+        await self._http.login(email, password)
+        await self._http.fetch_sticky()
+        self._user = await self._state.fetch_client_user()
+        self._ready.set()
+        self.dispatch("ready")
+
+        def retry():
+            t = 0
+            while True:
+                if t < 60:
+                    yield t
+                    t += 10
+                else:
+                    yield 60
+
+        retry_after = retry()
+        while self.is_running():
+            try:
+                await self._http.ping()
+                raw = await self._http.pull()
+            except asyncio.TimeoutError:
+                continue
+            except asyncio.CancelledError:
+                return
+            except HTTPRequestFailure as e:
+                if e.response.status in (502, 503):
+                    self._http.change_pull_channel()
+                else:
+                    raise
+            except:
+                traceback.print_exc()
+                await asyncio.sleep(next(retry_after))
+            else:
+                retry_after = retry()
+                self.loop.create_task(self._state.process_raw_data(raw))
+
+    #this part is directly copy from discord.py
 
     def _do_cleanup(self):
         log.info("Cleaning up event loop.")
@@ -121,44 +171,8 @@ class Client:
         except:
             return None
 
-    async def start(self, email, password):
-        self._closed.clear()
-        self._http = http.HTTPRequest(loop=self.loop)
-        self._state = state.State(loop=self.loop, http=self._http, dispatch=self.dispatch, max_messages=self._max_messages)
-        self.dispatch("start")
-        await self._http.login(email, password)
-        await self._http.fetch_sticky()
-        self._user = self._state.get_user(self._http.user_id, cls=user.User)
-        self._ready.set()
-        self.dispatch("ready")
-
-        def retry():
-            t = 0
-            while True:
-                if t < 60:
-                    yield t
-                    t += 10
-                else:
-                    yield 60
-
-        retry_after = retry()
-
-        while self.is_running():
-            try:
-                await self._http.ping()
-                raw = await self._http.pull()
-            except (asyncio.TimeoutError, ConnectionError):
-                continue
-            except asyncio.CancelledError:
-                return
-            except:
-                traceback.print_exc()
-                await asyncio.sleep(next(retry_after))
-            else:
-                self.loop.create_task(self._state.process_raw_data(raw))
-
     def run(self, *args, **kwargs):
-        is_windows = sys.platform == 'win32'
+        is_windows = sys.platform == "win32"
         loop = self.loop
         if not is_windows:
             loop.add_signal_handler(signal.SIGINT, self._do_cleanup)
@@ -185,6 +199,20 @@ class Client:
                 return None
             return task.result()
 
+    async def wait_for(self, event, *, check, timeout=None):
+        fut = self.loop.create_future()
+
+        if not check:
+            check = _always_true
+
+        all_events = self._wait_events.get(event, [])
+        all_events.append((fut, check))
+        self._wait_events[event] = all_events
+
+        return await asyncio.wait_for(fut, timeout, loop=self.loop)
+
+    #end copy
+
     async def close(self):
         await self._http.logout()
         await self._http.close()
@@ -192,7 +220,11 @@ class Client:
         self._ready.clear()
 
     async def on_ready(self):
-        print("listening...")
+        print("Login as")
+        print(self.user.name)
+        print(self.user.id)
+
+
 
     @property
     def user(self):

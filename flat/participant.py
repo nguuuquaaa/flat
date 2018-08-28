@@ -1,9 +1,8 @@
-from . import base
-
+from .base import *
 
 #==================================================================================================================================================
 
-class Participant(base.Object, base.Partial):
+class Participant(Object):
     @property
     def thread(self):
         return self._thread

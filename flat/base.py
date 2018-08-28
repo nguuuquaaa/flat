@@ -19,18 +19,14 @@ class Object:
 #==================================================================================================================================================
 
 class Messageable:
-    async def send(self, ctn):
-        return await self._state.http.send_message(self, ctn)
+    async def send(self, content):
+        raw_messages = await self._state.http.send_message(self, content)
+        return self._state.get_send_messages(raw_messages, content)
 
-class Partial:
-    @property
-    def partial(self):
-        return self._partial
-
-class OneToOneMixin:
+class OneToOneMixin(Messageable):
     def to_dict(self):
         return {"other_user_fbid": self._id}
 
-class GroupMixin:
+class GroupMixin(Messageable):
     def to_dict(self):
         return {"thread_fbid": self._id}

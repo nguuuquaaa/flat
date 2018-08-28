@@ -1,20 +1,31 @@
-from . import base
+from .base import *
 import asyncio
+
+#==================================================================================================================================================
 
 CHUNK_SIZE = 515 * 1024
 
-class _BaseAttachment(base.Object):
+#==================================================================================================================================================
+
+class _BaseAttachment(Object):
     pass
 
 class FileAttachment(_BaseAttachment):
+    @property
+    def filename(self):
+        return self._filename
+
     async def save(self, fp):
+        if self._url is None:
+            self._url = await self._state.http.fetch_image_url(self._id)
         async with self._state.http.session.get(self._url) as resp:
+            c = resp.content
             while True:
-                chunk = await resp.content.read(CHUNK_SIZE)
+                chunk = await c.read(CHUNK_SIZE)
                 if chunk:
                     fp.write(chunk)
                 else:
-                    return
+                    break
 
 class ImageAttachment(FileAttachment):
     @property
@@ -30,6 +41,11 @@ class VideoAttachment(FileAttachment):
 class Sticker(_BaseAttachment):
     pass
 
+class EmbedLink(_BaseAttachment):
+    @property
+    def url(self):
+        return self._url
+
 #==================================================================================================================================================
 
 try:
@@ -40,7 +56,8 @@ else:
     from io import BytesIO
 
     async def to_gif(self, fp, *, executor=None, loop=None):
-        bytes_ = await self._state.http.session.get(self._url)
+        im = BytesIO()
+        await self.save(im)
         frames = []
         row_count = self._row_count
         column_count = self._column_count
