@@ -15,13 +15,16 @@ class Object:
 
     def __ne__(self, other):
         return not (isinstance(other, self.__class__) and other.id == self.id)
+        
+    def __hash__(self):
+        return hash(self._id)
 
 #==================================================================================================================================================
 
 class Messageable:
     async def send(self, content):
         raw_messages = await self._state.http.send_message(self, content)
-        return self._state.get_send_messages(raw_messages, content)
+        return [self._state.get_send_message(rm, content) for rm in raw_messages]
 
 class OneToOneMixin(Messageable):
     def to_dict(self):

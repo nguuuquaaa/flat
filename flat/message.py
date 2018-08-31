@@ -3,7 +3,27 @@ from .thread import *
 from .user import *
 from datetime import datetime
 
-__all__ = ("Message",)
+__all__ = ["Message", "Reaction"]
+
+#==================================================================================================================================================
+
+class Reaction:
+    def __init__(self, emoji, *, author, message):
+        self._emoji = emoji
+        self._author = author
+        self._message = message
+
+    @property
+    def emoji(self):
+        return self._emoji
+
+    @property
+    def author():
+        return self._author
+
+    @property
+    def message():
+        return self._message
 
 #==================================================================================================================================================
 

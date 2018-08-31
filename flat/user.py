@@ -4,10 +4,16 @@ from .base import *
 
 class _BaseUser(Object, OneToOneMixin):
     @property
+    def full_name(self):
+        return self._full_name
+        
+    @property
     def name(self):
-        return self._name
+        return self._full_name
 
-    full_name = name
+    @property
+    def first_name(self):
+        return self._first_name
 
 class User(_BaseUser):
     pass

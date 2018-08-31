@@ -349,7 +349,7 @@ class HTTPRequest:
         self.start_time = utils.now()
         for cookie in self.session.cookie_jar:
             if cookie.key == "c_user":
-                self.user_id = cookie.value
+                self.user_id = str(cookie.value)
                 break
         else:
             raise error.LoginError("Cannot find c_user cookie.")

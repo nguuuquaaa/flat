@@ -6,6 +6,7 @@ import traceback
 import inspect
 import sys
 import logging
+import signal
 
 log = logging.getLogger(__name__)
 
@@ -117,13 +118,16 @@ class Client:
             except asyncio.CancelledError:
                 return
             except HTTPRequestFailure as e:
-                if e.response.status in (502, 503):
+                stt = e.response.status
+                if stt in (502, 503):
                     self._http.change_pull_channel()
+                elif stt == 400:
+                    continue
                 else:
-                    raise
+                    traceback.print_exc()
+                    await asyncio.sleep(next(retry_after))
             except:
-                traceback.print_exc()
-                await asyncio.sleep(next(retry_after))
+                raise
             else:
                 retry_after = retry()
                 self.loop.create_task(self._state.process_raw_data(raw))
@@ -178,7 +182,7 @@ class Client:
             loop.add_signal_handler(signal.SIGINT, self._do_cleanup)
             loop.add_signal_handler(signal.SIGTERM, self._do_cleanup)
 
-        task = self.loop.create_task(self.start(*args, **kwargs))
+        task = loop.create_task(self.start(*args, **kwargs))
 
         def stop_loop_on_finish(fut):
             loop.stop()
@@ -221,12 +225,13 @@ class Client:
 
     async def on_ready(self):
         print("Login as")
-        print(self.user.name)
+        print(self.user.full_name)
         print(self.user.id)
-
-
 
     @property
     def user(self):
         return self._user
+
+    def get_thread(self, id):
+        return self._state.threads.get(id)
 

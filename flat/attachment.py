@@ -3,10 +3,6 @@ import asyncio
 
 #==================================================================================================================================================
 
-CHUNK_SIZE = 515 * 1024
-
-#==================================================================================================================================================
-
 class _BaseAttachment(Object):
     pass
 
@@ -15,22 +11,19 @@ class FileAttachment(_BaseAttachment):
     def filename(self):
         return self._filename
 
-    async def save(self, fp):
-        if self._url is None:
-            self._url = await self._state.http.fetch_image_url(self._id)
-        async with self._state.http.session.get(self._url) as resp:
-            c = resp.content
-            while True:
-                chunk = await c.read(CHUNK_SIZE)
-                if chunk:
-                    fp.write(chunk)
-                else:
-                    break
-
 class ImageAttachment(FileAttachment):
     @property
     def animated(self):
         return self._animated
+
+    async def get_url(self):
+        if self._url is None:
+            self._url = await self._state.http.fetch_image_url(self._id)
+        return self._url
+
+    async def save(self):
+        url = await self.get_url()
+        return await self._state.http.get(url)
 
 class AudioAttachment(FileAttachment):
     pass
@@ -56,8 +49,8 @@ else:
     from io import BytesIO
 
     async def to_gif(self, fp, *, executor=None, loop=None):
-        im = BytesIO()
-        await self.save(im)
+        resp = await self._state.http.session.get(self._url)
+        im = BytesIO(await resp.read())
         frames = []
         row_count = self._row_count
         column_count = self._column_count
@@ -65,7 +58,7 @@ else:
         duration = self._frame_rate
 
         def do_stuff():
-            image = Image.open(BytesIO(bytes_))
+            image = Image.open(im)
             img_width, img_height = image.size
             width = img_width/column_count
             height = img_height/row_count
