@@ -11,6 +11,9 @@ class _BaseThread(Object):
     def me(self):
         return self._me
 
+    async def seen(self):
+        await self._state.http.mark_as_read(self._id)
+
 
 class OneToOne(_BaseThread, OneToOneMixin):
     @property
@@ -23,6 +26,7 @@ class OneToOne(_BaseThread, OneToOneMixin):
         return p
 
     def store_me(self, *, nickname=None):
+        cu = self._state.client_user
         p = Participant(state=self._state, user=cu, thread=self, admin=None, nickname=nickname)
         self._me = p
         return p

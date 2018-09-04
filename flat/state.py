@@ -5,6 +5,7 @@ from .content import *
 from .message import *
 from .attachment import *
 from .error import *
+from .enums import *
 from . import utils
 import collections
 import json
@@ -66,12 +67,20 @@ class State:
     def _parse_user(self, user_id, data):
         utype = data["type"]
         if utype in ("user", "friend"):
+            g = data["gender"]
+            if g == 2:  
+                gender = Gender.MALE
+            elif g == 1:
+                gender = Gender.FEMALE
+            else:
+                gender = Gender.UNDEFINED
+                
             u = User(
                 user_id,
                 state=self,
                 full_name=data["name"],
                 first_name=data["firstName"],
-                gender=data["gender"],
+                gender=gender,
                 alias=data["alternateName"] or None,
                 thumbnail=data["thumbSrc"],
                 url=data["uri"],

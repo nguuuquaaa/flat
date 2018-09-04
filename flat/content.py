@@ -65,19 +65,19 @@ class Content:
     def bigmoji(self, emoji, size="small"):
         if size in ("large", "medium", "small"):
             self._bigmoji = Bigmoji(emoji=e, size=size)
+            return self
         else:
             raise ValueError("Emoji size must be either large, medium or small (lowercase).")
-        return self
 
     def attach_file(self, *fp):
         self._files.extend(f for f in fp if isinstance(f, File))
         return self
 
-    def sticker(self, sticker_id):
+    def add_sticker(self, sticker_id):
         self._sticker_id = sticker_id
         return self
 
-    def embed(self, url, *, append=True):
+    def embed_link(self, url, *, append=True):
         if url.startswith(("https://", "http://")):
             if append:
                 self._text += url
@@ -160,9 +160,9 @@ class Content:
         if message.bigmoji:
             ctn.bigmoji(message.bigmoji.id, size=message.bigmoji.size)
         if message.sticker:
-            ctn.sticker(message.sticker.id)
+            ctn.add_sticker(message.sticker.id)
         if message.embed_link:
-            ctn.embed(message.embed_link.url, append=False)
+            ctn.embed_link(message.embed_link.url, append=False)
         for f in message.files:
             b = BytesIO()
             await f.save(b)

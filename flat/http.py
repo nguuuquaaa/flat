@@ -210,8 +210,9 @@ class HTTPRequest:
     MODERN_SETTINGS_MENU = "https://www.facebook.com/bluebar/modern_settings_menu/"
     REMOVE_FRIEND = "https://m.facebook.com/a/removefriend.php"
     EMBED_LINK = "https://www.facebook.com/message_share_attachment/fromURI/"
+    MARK_FOLDER_AS_READ = "https://www.facebook.com/ajax/mercury/mark_folder_as_read.php?dpr=1"
 
-    def __init__(self, *, loop=None, user_agent=None):
+    def __init__(self, *, loop=None, user_agent=None, cookie_jar=None):
         self.loop = loop or asyncio.get_event_loop()
         self.pull_channel = 0
         self.client = "mercury"
@@ -222,13 +223,14 @@ class HTTPRequest:
             "User-Agent": user_agent or USER_AGENTS[0],
             "Connection": "keep-alive",
         }
+        self.cookie_jar = cookie_jar
         self.clear()
 
     def change_pull_channel(self):
         self.pull_channel = (self.pull_channel + 1) % 6
 
     def clear(self):
-        self.session = aiohttp.ClientSession(loop=self.loop)
+        self.session = aiohttp.ClientSession(loop=self.loop, cookie_jar=self.cookie_jar)
         self.params = {}
         self.request_counter = 1
         self.seq = "0"
@@ -288,7 +290,8 @@ class HTTPRequest:
 
         if "checkpoint" in resp.url.human_repr():
             bytes_ = await resp.read()
-            resp = await self.handle_2FA(bytes_)
+            #resp = await self.handle_2FA(bytes_)
+            #I don't think this does anything anymore
 
         if "save-device" in resp.url.human_repr():
             resp = await self.session.get(self.SAVE_DEVICE, headers=self.headers)
@@ -545,10 +548,29 @@ class HTTPRequest:
         return list(ret[0].values())
 
     async def fetch_users(self, *user_ids):
-        queries = {
-            "ids[{}]".format(i): uid for i, uid in enumerate(user_ids)
-        }
+        queries = {"ids[{}]".format(i): uid for i, uid in enumerate(user_ids)}
 
         data = await self.post(self.USER_INFO, data=queries, as_json=True)
         return data["payload"]["profiles"]
+
+    async def mark_seen(self):
+        #this actually mark as seeing message notification
+        await self.post(self.MARK_SEEN, data={"seen_timestamp": 0})
+
+    async def change_read_status(self, status, thread_id):
+        data = {
+            "ids[{}]".format(thread_id): "true" if status else "false",
+            "watermarkTimestamp": utils.now(),
+            "shouldSendReadReceipt": "true"
+        }
+        await self.post(self.READ_STATUS, data=data)
+
+    async def mark_as_read(self, thread_id):
+        #this is the true infamous "seen"
+        await self.change_read_status(True, thread_id)
+
+    async def mark_folder_as_read(self, folder):
+        if folder in ("inbox", "archieved", "pending"):
+            await self.post(self.MARK_FOLDER_AS_READ, data={"folder": folder})
+
 

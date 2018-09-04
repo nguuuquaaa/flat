@@ -7,6 +7,7 @@ import inspect
 import sys
 import logging
 import signal
+import aiohttp
 
 log = logging.getLogger(__name__)
 
@@ -19,7 +20,7 @@ class Client:
     '''
     This is heavily influenced by discord.py, or more like most are blatantly copy-pasted.
     '''
-    def __init__(self, *, loop=None, max_messages=1000):
+    def __init__(self, *, loop=None, max_messages=1000, save_cookies=False):
         self.loop = loop or asyncio.get_event_loop()
 
         self._wait_events = {}
@@ -27,14 +28,16 @@ class Client:
         self._closed = asyncio.Event()
         self._ready = asyncio.Event()
         self._max_messages = max_messages
+        self._save_cookies = save_cookies
 
         for name, member in inspect.getmembers(self):
             if name.startswith("on_"):
-                ev_name = name[3:]
-                if ev_name in self._form_events:
-                    self._form_events[ev_name].append(member)
-                else:
-                    self._form_events[ev_name] = [member]
+                if inspect.iscoroutinefunction(member):
+                    ev_name = name[3:]
+                    if ev_name in self._form_events:
+                        self._form_events[ev_name].append(member)
+                    else:
+                        self._form_events[ev_name] = [member]
 
     def dispatch(self, name, *args):
         wait_events = self._wait_events.get(name)
@@ -88,12 +91,25 @@ class Client:
     def is_running(self):
         return not self._closed.is_set()
 
-    async def start(self, email, password):
+    async def start(self, email, password, load_cookies=None):
         self.dispatch("start")
         self._closed.clear()
-        self._http = HTTPRequest(loop=self.loop)
+        if load_cookies:
+            cookie_jar = aiohttp.CookieJar()
+            try:
+                cookie_jar.load(load_cookies)
+            except:
+                cookie_jar = None
+        else:
+            cookie_jar = None
+
+        self._http = HTTPRequest(loop=self.loop, cookie_jar=cookie_jar)
         self._state = State(loop=self.loop, http=self._http, dispatch=self.dispatch, max_messages=self._max_messages)
-        await self._http.login(email, password)
+        if not cookie_jar:
+            await self._http.login(email, password)
+        else:
+            await self._http.save_login_state()
+
         await self._http.fetch_sticky()
         self._user = await self._state.fetch_client_user()
         self._ready.set()
@@ -218,7 +234,10 @@ class Client:
     #end copy
 
     async def close(self):
-        await self._http.logout()
+        if self._save_cookies:
+            self._http.session.cookie_jar.save(self._save_cookies)
+        else:
+            await self._http.logout()
         await self._http.close()
         self._closed.set()
         self._ready.clear()
@@ -234,4 +253,18 @@ class Client:
 
     def get_thread(self, id):
         return self._state.threads.get(id)
+
+    def listen(self, func):
+        if not inspect.iscoroutinefunction(func):
+            raise ("Not a coroutine.")
+
+        func_name = func.__name__
+        if not name.startswith("on_"):
+            raise ValueError("Function name must start with on_ to be registered as event.")
+
+        ev_name = func_name[3:]
+        if name in self._form_events:
+            self._form_events[ev_name].append(func)
+        else:
+            self._form_events[ev_name] = [func]
 

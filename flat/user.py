@@ -3,10 +3,13 @@ from .base import *
 #==================================================================================================================================================
 
 class _BaseUser(Object, OneToOneMixin):
+    pass
+
+class User(_BaseUser):
     @property
     def full_name(self):
         return self._full_name
-        
+
     @property
     def name(self):
         return self._full_name
@@ -15,11 +18,18 @@ class _BaseUser(Object, OneToOneMixin):
     def first_name(self):
         return self._first_name
 
-class User(_BaseUser):
-    pass
+    @property
+    def gender(self):
+        return self._gender
+
+    @property
+    def alias(self):
+        return self._alias
 
 class Page(_BaseUser):
-    pass
+    @property
+    def name(self):
+        return self._name
 
 class _ClientPrivilege:
     pass
