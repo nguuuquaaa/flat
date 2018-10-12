@@ -20,7 +20,7 @@ class Client:
     '''
     This is heavily influenced by discord.py, or more like most are blatantly copy-pasted.
     '''
-    def __init__(self, *, loop=None, max_messages=1000, save_cookies=False):
+    def __init__(self, *, loop=None, max_messages=1000, save_cookies=None):
         self.loop = loop or asyncio.get_event_loop()
 
         self._wait_events = {}

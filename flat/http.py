@@ -246,6 +246,7 @@ class HTTPRequest:
         self.request_counter += 1
         return params
 
+    @utils.retries_wrap(3)
     async def get(self, url, *, headers=None, params=None, timeout=30, as_json=False, json_decoder=utils.load_broken_json, **kwargs):
         headers = headers or self.headers
         params = self.update_params(params or {})
@@ -258,6 +259,7 @@ class HTTPRequest:
             else:
                 return bytes_
 
+    @utils.retries_wrap(3)
     async def post(self, url, *, headers=None, data=None, timeout=30, as_json=False, json_decoder=utils.load_broken_json, **kwargs):
         headers = headers or self.headers
         data = self.update_params(data or {})
@@ -440,7 +442,15 @@ class HTTPRequest:
         for sd in send_data:
             sd.update(data)
             d = await self.post(self.SEND, data=sd, as_json=True)
-            ms.extend((m for m in d["payload"]["actions"] if m))
+            fb_dtsg = utils.get_jsmods_require(d, 2)
+            if fb_dtsg is not None:
+                self.params["fb_dtsg"] = fb_dtsg
+            try:
+                send = [m for m in d["payload"]["actions"] if m]
+            except:
+                continue
+            else:
+                ms.extend(send)
         return ms
 
     async def fetch_embed_data(self, url):

@@ -3,6 +3,7 @@ import json
 import random
 import re
 import functools
+from .error import *
 
 #==================================================================================================================================================
 
@@ -123,3 +124,18 @@ def may_has_extension(filename):
     else:
         ext, hyph, name = filename.partition("-")
         return name + "." + ext
+
+def retries_wrap(times, *, verbose=True):
+    def wrapped(func):
+        @functools.wraps(func)
+        async def new_func(*args, **kwargs):
+            for i in range(times):
+                try:
+                    return await func(*args, **kwargs)
+                except Exception as e:
+                    if verbose:
+                        print("Ignored {}, retrying... ({}/{})".format(type(e), i+1, times))
+            else:
+                raise HTTPException("Cannot send HTTP request.")
+        return new_func
+    return wrapped

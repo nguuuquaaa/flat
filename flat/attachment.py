@@ -49,8 +49,8 @@ else:
     from io import BytesIO
 
     async def to_gif(self, fp, *, executor=None, loop=None):
-        resp = await self._state.http.session.get(self._url)
-        im = BytesIO(await resp.read())
+        bytes_ = await self._state.http.get(self._url)
+        im = BytesIO(bytes_)
         frames = []
         row_count = self._row_count
         column_count = self._column_count
