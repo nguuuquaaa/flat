@@ -148,8 +148,9 @@ class Client:
                 retry_after = retry()
                 self.loop.create_task(self._state.process_raw_data(raw))
 
+    #
     #this part is directly copy from discord.py
-
+    #
     def _do_cleanup(self):
         log.info("Cleaning up event loop.")
         loop = self.loop
@@ -230,8 +231,9 @@ class Client:
         self._wait_events[event] = all_events
 
         return await asyncio.wait_for(fut, timeout, loop=self.loop)
-
+    #
     #end copy
+    #
 
     async def close(self):
         if self._save_cookies:

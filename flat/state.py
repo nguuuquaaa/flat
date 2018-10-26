@@ -24,6 +24,13 @@ def get_thread_id(node):
     except KeyError:
         return key["otherUserFbId"]
 
+def may_has_extension(filename):
+    if filename.partition(".")[1]:
+        return filename
+    else:
+        ext, hyph, name = filename.partition("-")
+        return name + "." + ext
+
 #==================================================================================================================================================
 
 class State:
@@ -68,13 +75,13 @@ class State:
         utype = data["type"]
         if utype in ("user", "friend"):
             g = data["gender"]
-            if g == 2:  
+            if g == 2:
                 gender = Gender.MALE
             elif g == 1:
                 gender = Gender.FEMALE
             else:
                 gender = Gender.UNDEFINED
-                
+
             u = User(
                 user_id,
                 state=self,
@@ -380,7 +387,7 @@ class State:
         for d in deltas:
             node = d["deltaMessageReaction"]
             sender_id = node["senderId"]
-            m = utils.get_elem(self.messages, lambda m: m.id==sender_id)
+            m = utils.get(self.messages, lambda m: m.id==sender_id)
             if m:
                 author = m.thread.get_participant(node["userId"])
                 self.dispatch("reaction_add", Reaction(node["reaction"], author=author, message=message))
@@ -451,7 +458,7 @@ class State:
         frame_count = node["frame_count"]
         frame_rate = node["frame_rate"]
         preview_url = node["url"]
-        url = node["sprite_image_2x"]["uri"]
+        url = utils.get_either(node, "sprite_image_2x", "padded_sprite_image_2x", "sprite_image", "padded_sprite_image")["uri"]
 
         return Sticker(
             sid, state=self, label=label, url=url, width=width, height=height, column_count=column_count,
@@ -461,7 +468,7 @@ class State:
     def _parse_file(self, node):
         aid = node["legacy_attachment_id"]
         attachment_type = node["__typename"]
-        filename = utils.may_has_extension(node["filename"])
+        filename = may_has_extension(node["filename"])
 
         if attachment_type == "MessageImage":
             cls = ImageAttachment

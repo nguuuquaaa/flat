@@ -8,6 +8,10 @@ import random
 import re
 import json
 import mimetypes
+import time
+import json
+import re
+import functools
 
 #==================================================================================================================================================
 
@@ -23,10 +27,120 @@ USER_AGENTS = (
 
 try:
     import lxml
-except:
+except ImportError:
     PARSER = "html.parser"
 else:
     PARSER = "lxml"
+
+#==================================================================================================================================================
+
+_DIGITS = "0123456789abcdefghijklmnopqrstuvwxyz"
+def str_base(number, base=36):
+    if isinstance(number, int):
+        if number == 0:
+            return "0"
+        elif number < 0:
+            value = -number
+            sign = "-"
+        else:
+            value = number
+            sign = ""
+
+        ret = ""
+        while value > 0:
+            value, remainder = divmod(value, base)
+            ret = _DIGITS[remainder] + ret
+        return sign + ret
+    else:
+        raise TypeError("Input number must be int.")
+
+def now():
+    return int(time.time()*1000)
+
+def generate_offline_threading_id():
+    t = now()
+    v = random.randrange(0xffffffff)
+    return (t << 22) + (v & 0x7ffff)
+
+def strip_to_json(s):
+    start = "[{"
+    for i, c in enumerate(s):
+        if c in start:
+            return s[i:]
+    else:
+        return None
+
+def load_broken_json(b):
+    return json.loads(strip_to_json(b.decode("utf-8")))
+
+def get_jsmods_require(d, index, default=None):
+    try:
+        return d["jsmods"]["require"][0][index][0]
+    except (KeyError, IndexError):
+        return default
+
+def get_between(text, start, end):
+    parts = text.partition(start)
+    if parts[2]:
+        ret = parts[2].partition(end)
+        if ret[2]:
+            return ret[0]
+        else:
+            raise IndexError("Cannot find end token.")
+    else:
+        raise IndexError("Cannot find start token.")
+
+def flatten(data, prefix):
+    if isinstance(data, dict):
+        iterator = data.items()
+    elif isinstance(data, (list, tuple)):
+        iterator = enumerate(data)
+    else:
+        data = data or ""
+        return {prefix: data}
+
+    ret = {}
+    for key, value in iterator:
+        proc = flatten(value, "{}[{}]".format(prefix, key))
+        ret.update(proc)
+    return ret
+
+def retries_wrap(times, *, verbose=True):
+    def wrapped(func):
+        @functools.wraps(func)
+        async def new_func(*args, **kwargs):
+            for i in range(times):
+                try:
+                    return await func(*args, **kwargs)
+                except asyncio.TimeoutError:
+                    raise
+                except KeyboardInterrupt:
+                    raise
+                except Exception as e:
+                    if verbose:
+                        print("Ignored {}, retrying... ({}/{})".format(type(e), i+1, times))
+            else:
+                raise HTTPException("Cannot send HTTP request.")
+        return new_func
+    return wrapped
+
+#==================================================================================================================================================
+
+_WHITESPACE = re.compile(r"\s*")
+
+class ConcatJSONDecoder(json.JSONDecoder):
+    def decode(self, s, _w=_WHITESPACE.match):
+        s = s.strip()
+        s_len = len(s)
+
+        objs = []
+        end = 0
+        while end != s_len:
+            obj, end = self.raw_decode(s, idx=_w(s, end).end())
+            objs.append(obj)
+        return objs
+
+load_concat_json = functools.partial(json.loads, cls=ConcatJSONDecoder)
 
 #==================================================================================================================================================
 
@@ -240,14 +354,14 @@ class HTTPRequest:
 
     def update_params(self, extra={}):
         params = self.params.copy()
-        params["__req"] = utils.str_base(self.request_counter)
+        params["__req"] = str_base(self.request_counter)
         params["seq"] = self.seq
         params.update(extra)
         self.request_counter += 1
         return params
 
-    @utils.retries_wrap(3)
-    async def get(self, url, *, headers=None, params=None, timeout=30, as_json=False, json_decoder=utils.load_broken_json, **kwargs):
+    @retries_wrap(3)
+    async def get(self, url, *, headers=None, params=None, timeout=30, as_json=False, json_decoder=load_broken_json, **kwargs):
         headers = headers or self.headers
         params = self.update_params(params or {})
         async with self.session.get(url, headers=headers, params=params, timeout=timeout, **kwargs) as response:
@@ -259,8 +373,8 @@ class HTTPRequest:
             else:
                 return bytes_
 
-    @utils.retries_wrap(3)
-    async def post(self, url, *, headers=None, data=None, timeout=30, as_json=False, json_decoder=utils.load_broken_json, **kwargs):
+    @retries_wrap(3)
+    async def post(self, url, *, headers=None, data=None, timeout=30, as_json=False, json_decoder=load_broken_json, **kwargs):
         headers = headers or self.headers
         data = self.update_params(data or {})
         async with self.session.post(url, headers=headers, data=data, timeout=timeout, **kwargs) as response:
@@ -351,7 +465,7 @@ class HTTPRequest:
     async def save_login_state(self):
         self.params.clear()
         self.client_id = "{:x}".format(random.randrange(0x80000000))
-        self.start_time = utils.now()
+        self.start_time = now()
         for cookie in self.session.cookie_jar:
             if cookie.key == "c_user":
                 self.user_id = str(cookie.value)
@@ -407,9 +521,9 @@ class HTTPRequest:
             "cap": "8"
         }
 
-        self.prev = utils.now()
-        self.tmp_prev = utils.now()
-        self.last_sync = utils.now()
+        self.prev = now()
+        self.tmp_prev = now()
+        self.last_sync = now()
 
         return self.user_id
 
@@ -424,11 +538,11 @@ class HTTPRequest:
     async def send_message(self, dest, ctn):
         if not isinstance(ctn, Content):
             ctn = Content(ctn)
-        otid = utils.generate_offline_threading_id()
+        otid = generate_offline_threading_id()
         data = {
             "client": self.client,
             "author": "fbid:" + str(self.user_id),
-            "timestamp": utils.now(),
+            "timestamp": now(),
             "source": "source:chat:web",
             "offline_threading_id": otid,
             "message_id": otid,
@@ -442,7 +556,7 @@ class HTTPRequest:
         for sd in send_data:
             sd.update(data)
             d = await self.post(self.SEND, data=sd, as_json=True)
-            fb_dtsg = utils.get_jsmods_require(d, 2)
+            fb_dtsg = get_jsmods_require(d, 2)
             if fb_dtsg is not None:
                 self.params["fb_dtsg"] = fb_dtsg
             try:
@@ -460,7 +574,7 @@ class HTTPRequest:
             as_json=True
         )
         share_data = ret["payload"]["share_data"]
-        return utils.flatten(share_data, "shareable_attachment")
+        return flatten(share_data, "shareable_attachment")
 
     async def upload_file(self, f):
         b, filename = f.read()
@@ -483,7 +597,7 @@ class HTTPRequest:
             data=file_payload
         )
 
-        ret = utils.load_broken_json(await resp.read())
+        ret = load_broken_json(await resp.read())
         return ret["payload"]["metadata"][0]
 
     async def fetch_sticky(self):
@@ -522,6 +636,7 @@ class HTTPRequest:
             "sticky_token": self.sticky,
             "sticky_pool": self.pool,
             "clientid": self.client_id,
+            "state": "active"
         }
 
         d = await self.get(self.STICKY.format(self.pull_channel), params=params, timeout=15, as_json=True)
@@ -531,7 +646,7 @@ class HTTPRequest:
 
     async def fetch_image_url(self, image_id):
         data = await self.get(self.ATTACHMENT_PHOTO, params={"photo_id": image_id}, as_json=True)
-        url = utils.get_jsmods_require(data, 3)
+        url = get_jsmods_require(data, 3)
         if url:
             return url
         else:
@@ -546,7 +661,7 @@ class HTTPRequest:
             "response_format": "json",
             "queries": json.dumps(data)
         }
-        batch = await self.post(self.GRAPHQL, data=d, as_json=True, json_decoder=utils.load_concat_json)
+        batch = await self.post(self.GRAPHQL, data=d, as_json=True, json_decoder=load_concat_json)
         return batch
 
     async def fetch_threads(self, *thread_ids):
@@ -570,7 +685,7 @@ class HTTPRequest:
     async def change_read_status(self, status, thread_id):
         data = {
             "ids[{}]".format(thread_id): "true" if status else "false",
-            "watermarkTimestamp": utils.now(),
+            "watermarkTimestamp": now(),
             "shouldSendReadReceipt": "true"
         }
         await self.post(self.READ_STATUS, data=data)
