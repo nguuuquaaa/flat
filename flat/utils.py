@@ -5,6 +5,8 @@ def get(container, pred, default=None):
     if isinstance(pred, (int, str)):
         try:
             return container[pred]
+        except KeyboardInterrupt:
+            raise
         except:
             return default
 
@@ -12,6 +14,8 @@ def get(container, pred, default=None):
         for item in container:
             try:
                 is_true = pred(item)
+            except KeyboardInterrupt:
+                raise
             except:
                 continue
             else:
