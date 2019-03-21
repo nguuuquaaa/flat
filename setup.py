@@ -13,7 +13,7 @@ setuptools.setup(
     version="0.0.1",
     packages=["flat"],
     license="MIT",
-    description="Facebook chat (Messenger) wrapper written in python."
+    description="Facebook chat (Messenger) wrapper written in python.",
     include_package_data=True,
     install_requires=requirements,
     extras_require={
