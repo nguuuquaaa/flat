@@ -15,9 +15,9 @@ class Reaction:
 
 class Message(base.Object):
     @classmethod
-    def from_content(cls, state, data, content):
-        if not isinstance(content, content.Content):
-            content = content.Content(content)
+    def from_content(cls, state, data, ctn):
+        if not isinstance(ctn, content.Content):
+            ctn = content.Content(ctn)
         messages = []
         mid = data["message_id"]
         thread_id = data["thread_fbid"] or data["other_user_fbid"]
@@ -25,7 +25,7 @@ class Message(base.Object):
         author = thread.get_participant(state.client_user.id)
         ts = datetime.fromtimestamp(data["timestamp"]/1000)
 
-        bigmoji = content.bigmoji
+        bigmoji = ctn.bigmoji
 
         files = []
         sticker = None
@@ -58,10 +58,10 @@ class Message(base.Object):
             )
 
         else:
-            text = content._text
+            text = ctn._text
             mentions = []
-            for m in content._mentions:
-                mentions.append(content.Mention(user=thread.get_participant(m.user.id), offset=m.offset, length=m.length))
+            for m in ctn._mentions:
+                mentions.append(ctn.Mention(user=thread.get_participant(m.user.id), offset=m.offset, length=m.length))
             return cls(
                 mid, _state=state, author=author, thread=thread, timestamp=ts,
                 text=text, bigmoji=None, sticker=None, embed_link=embed_link,
