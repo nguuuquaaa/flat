@@ -103,27 +103,6 @@ def flatten(data, prefix):
         ret.update(proc)
     return ret
 
-def retries_wrap(times, *, verbose=True):
-    def wrapped(func):
-        @functools.wraps(func)
-        async def new_func(self, *args, **kwargs):
-            for i in range(times):
-                try:
-                    return await func(self, *args, **kwargs)
-                except (asyncio.TimeoutError, KeyboardInterrupt, RuntimeError):
-                    raise
-                except error.HTTPRequestFailure as e:
-                    if e.response.status in (502, 503):
-                        self.change_pull_channel()
-                        continue
-                except Exception as e:
-                    if verbose:
-                        print("Ignored {}, retrying... ({}/{})".format(type(e), i+1, times))
-            else:
-                raise error.HTTPException("Cannot send HTTP request.")
-        return new_func
-    return wrapped
-
 #==================================================================================================================================================
 
 _WHITESPACE = re.compile(r"\s*")
@@ -360,6 +339,30 @@ class HTTPRequest:
         self.request_counter += 1
         return params
 
+    def retries_wrap(times, *, verbose=True):
+        def wrapped(func):
+            @functools.wraps(func)
+            async def new_func(self, *args, **kwargs):
+                for i in range(times):
+                    try:
+                        return await func(self, *args, **kwargs)
+                    except (asyncio.TimeoutError, KeyboardInterrupt, RuntimeError):
+                        raise
+                    except error.HTTPRequestFailure as e:
+                        status = e.response.status
+                        if status in (502, 503):
+                            self.change_pull_channel()
+                        elif status == 1357004:
+                            await self.save_login_state()
+                        continue
+                    except Exception as e:
+                        if verbose:
+                            print("Ignored {}, retrying... ({}/{})".format(type(e), i+1, times))
+                else:
+                    raise error.HTTPException("Cannot send HTTP request.")
+            return new_func
+        return wrapped
+
     @retries_wrap(3)
     async def get(self, url, *, headers=None, params=None, timeout=30, as_json=False, json_decoder=load_broken_json, **kwargs):
         headers = headers or self.headers
@@ -477,8 +480,6 @@ class HTTPRequest:
 
         bytes_ = await self.get(self.BASE)
         html = bytes_.decode("utf-8")
-        with open("test.html", "w", encoding="utf-8") as f:
-            f.write(html)
         soup = BS(html, PARSER)
 
         fb_dtsg = soup.find("input", attrs={"name": "fb_dtsg"})
