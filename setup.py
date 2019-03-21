@@ -9,7 +9,7 @@ with open("requirements.txt") as f:
 setuptools.setup(
     name="flat",
     author="nguuuquaaa",
-    url="https://github.com/nguuuquaaa/flat",,
+    url="https://github.com/nguuuquaaa/flat",
     version="0.0.1",
     packages=["flat"],
     license="MIT",
