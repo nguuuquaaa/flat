@@ -106,14 +106,16 @@ def flatten(data, prefix):
 def retries_wrap(times, *, verbose=True):
     def wrapped(func):
         @functools.wraps(func)
-        async def new_func(*args, **kwargs):
+        async def new_func(self, *args, **kwargs):
             for i in range(times):
                 try:
-                    return await func(*args, **kwargs)
+                    return await func(self, *args, **kwargs)
                 except (asyncio.TimeoutError, KeyboardInterrupt, RuntimeError):
                     raise
                 except error.HTTPRequestFailure as e:
-                    print((await e.response.read()).decode("utf-8"))
+                    if e.response.status in (502, 503):
+                        self.change_pull_channel()
+                        continue
                 except Exception as e:
                     if verbose:
                         print("Ignored {}, retrying... ({}/{})".format(type(e), i+1, times))
