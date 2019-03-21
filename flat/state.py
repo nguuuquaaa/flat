@@ -373,13 +373,13 @@ class State:
     def _parse_attachment(self, a):
         mercury = a["mercury"]
         if "sticker_attachment" in mercury:
-            return Sticker.from_data(mercury["sticker_attachment"])
+            return Sticker.from_data(self, mercury["sticker_attachment"])
 
         elif "blob_attachment" in mercury:
             return self._parse_file(mercury["blob_attachment"])
 
         elif "extensible_attachment" in mercury:
-            return EmbedLink.from_data(mercury["extensible_attachment"])
+            return EmbedLink.from_data(self, mercury["extensible_attachment"])
 
     def _parse_file(self, node):
         attachment_type = node["__typename"]
