@@ -1,65 +1,69 @@
-from .base import *
-from .thread import *
-from .user import *
+from . import base, content, attachment
 from datetime import datetime
 
-__all__ = ["Message", "Reaction"]
+__all__ = ("Message", "Reaction")
 
 #==================================================================================================================================================
 
 class Reaction:
     def __init__(self, emoji, *, author, message):
-        self._emoji = emoji
-        self._author = author
-        self._message = message
-
-    @property
-    def emoji(self):
-        return self._emoji
-
-    @property
-    def author():
-        return self._author
-
-    @property
-    def message():
-        return self._message
+        self.emoji = emoji
+        self.author = author
+        self.message = message
 
 #==================================================================================================================================================
 
-class Message(Object):
-    @property
-    def author(self):
-        return self._author
+class Message(base.Object):
+    @classmethod
+    def from_content(cls, state, data, content):
+        if not isinstance(content, content.Content):
+            content = content.Content(content)
+        messages = []
+        mid = data["message_id"]
+        thread_id = data["thread_fbid"] or data["other_user_fbid"]
+        thread = state.threads[thread_id]
+        author = thread.get_participant(state.client_user.id)
+        ts = datetime.fromtimestamp(data["timestamp"]/1000)
 
-    @property
-    def thread(self):
-        return self._thread
+        bigmoji = content.bigmoji
 
-    @property
-    def timestamp(self):
-        return self._timestamp
+        files = []
+        sticker = None
+        embed_link = None
+        if data["graphql_payload"]:
+            for item in data["graphql_payload"]:
+                node = item["node"]
+                attachment_type = node["__typename"]
+                if attachment_type == "ExtensibleMessageAttachment":
+                    embed_link = attachment.EmbedLink.from_data(node)
+                    break
+                elif attachment_type == "Sticker":
+                    sticker = attachment.Sticker.from_data(node)
+                    break
+                else:
+                    files.append(state._parse_file(node))
 
-    @property
-    def text(self):
-        return self._text
+        if files or sticker:
+            return cls(
+                mid, _state=state, author=author, thread=thread, timestamp=ts,
+                text="", bigmoji=None, sticker=sticker, embed_link=None,
+                files=files, mentions=[], reactions=[]
+            )
 
-    @property
-    def bigmoji(self):
-        return self._bigmoji
+        elif bigmoji:
+            return cls(
+                mid, _state=state, author=author, thread=thread, timestamp=ts,
+                text="", bigmoji=bigmoji, sticker=None, embed_link=None,
+                files=[], mentions=[], reactions=[]
+            )
 
-    @property
-    def files(self):
-        return tuple(self._files)
-
-    @property
-    def sticker(self):
-        return self._sticker
-
-    @property
-    def embed_link(self):
-        return self._embed_link
-
-    @property
-    def mentions(self):
-        return self._mentions
+        else:
+            text = content._text
+            mentions = []
+            for m in content._mentions:
+                mentions.append(content.Mention(user=thread.get_participant(m.user.id), offset=m.offset, length=m.length))
+            return cls(
+                mid, _state=state, author=author, thread=thread, timestamp=ts,
+                text=text, bigmoji=None, sticker=None, embed_link=embed_link,
+                files=[], mentions=[], reactions=[]
+            )

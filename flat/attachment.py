@@ -1,20 +1,47 @@
-from .base import *
+from . import base, utils
 import asyncio
 
 #==================================================================================================================================================
 
-class _BaseAttachment(Object):
+def _may_has_extension(filename):
+    if filename.partition(".")[1]:
+        return filename
+    else:
+        ext, hyph, name = filename.partition("-")
+        return name + "." + ext
+
+#==================================================================================================================================================
+
+class _BaseAttachment(base.Object):
     pass
 
 class FileAttachment(_BaseAttachment):
-    @property
-    def filename(self):
-        return self._filename
+    @classmethod
+    def _extract_data(cls, node):
+        return {"url": node.get("url")}
+
+    @classmethod
+    def from_data(cls, state, node):
+        aid = node["legacy_attachment_id"]
+        filename = _may_has_extension(node["filename"])
+        return cls(aid, _state=state, filename=filename, **cls._extract_data(node))
 
 class ImageAttachment(FileAttachment):
-    @property
-    def animated(self):
-        return self._animated
+    @classmethod
+    def _extract_data(cls, node):
+        xy = node["original_dimensions"]
+        try:
+            url = node["animated_image"]["uri"]
+            animated = True
+        except AttributeError:
+            url = None
+            animated = False
+        return {
+            "url": url,
+            "animated": animated,
+            "height": xy["y"],
+            "width": xy["x"]
+        }
 
     async def get_url(self):
         if self._url is None:
@@ -26,29 +53,81 @@ class ImageAttachment(FileAttachment):
         return await self._state.http.get(url)
 
 class AudioAttachment(FileAttachment):
-    pass
+    @classmethod
+    def _extract_data(cls, node):
+        return {
+            "url": node["playable_url"],
+            "duration": node["playable_duration_in_ms"]
+        }
 
 class VideoAttachment(FileAttachment):
-    pass
+    @classmethod
+    def _extract_data(cls, node):
+        xy = node["original_dimensions"]
+        return {
+            "url": node["playable_url"],
+            "duration": node["playable_duration_in_ms"],
+            "height": xy["y"],
+            "width": xy["x"]
+        }
 
 class Sticker(_BaseAttachment):
-    pass
+    @classmethod
+    def from_data(cls, state, node):
+        sid = node["id"]
+        label = node["label"]
+        width = node["width"]
+        height = node["height"]
+        column_count = node["frames_per_row"]
+        row_count = node["frames_per_column"]
+        frame_count = node["frame_count"]
+        frame_rate = node["frame_rate"]
+        preview_url = node["url"]
+        raw_ = utils.get_either(node, "sprite_image_2x", "padded_sprite_image_2x", "sprite_image", "padded_sprite_image")
+        try:
+            url = raw_["uri"]
+        except TypeError:
+            url = None
+
+        return cls(
+            sid, _state=state, label=label, url=url, width=width, height=height, column_count=column_count,
+            row_count=row_count, frame_count=frame_count, frame_rate=frame_rate
+        )
 
 class EmbedLink(_BaseAttachment):
-    @property
-    def url(self):
-        return self._url
+    @classmethod
+    def from_data(cls, state, node):
+        eid = node["legacy_attachment_id"]
+        story = node["story_attachment"]
+        desc = story["description"]["text"]
+        title = story["title_with_entities"]["text"]
+        url = URL(story["url"]).query.get("u")
+        media = story["media"]
+        if media:
+            media_url = media["animated_image"]
+            if media_url:
+                media_url = media_url["uri"]
+            else:
+                media_url = media["playable_url"]
+                if not media_url:
+                    media_url = media["image"]
+                    if media_url:
+                        media_url = media_url["uri"]
+        else:
+            media_url = None
+
+        return cls(eid, _state=state, url=url, title=title, description=desc, media_url=media_url)
 
 #==================================================================================================================================================
 
 try:
     from PIL import Image
-except:
+except ImportError:
     pass
 else:
     from io import BytesIO
 
-    async def to_gif(self, fp, *, executor=None, loop=None):
+    async def _to_gif(self, fp, *, executor=None, loop=None):
         bytes_ = await self._state.http.get(self._url)
         im = BytesIO(bytes_)
         frames = []
@@ -83,4 +162,4 @@ else:
         loop = loop or asyncio.get_event_loop()
         await loop.run_in_executor(executor, do_stuff)
 
-    Sticker.to_gif = to_gif
+    Sticker.to_gif = _to_gif

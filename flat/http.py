@@ -1,9 +1,7 @@
 import aiohttp
 import asyncio
 from bs4 import BeautifulSoup as BS
-from .error import *
-from .content import *
-from . import utils
+from . import error, content, utils
 import random
 import re
 import json
@@ -112,15 +110,15 @@ def retries_wrap(times, *, verbose=True):
             for i in range(times):
                 try:
                     return await func(*args, **kwargs)
-                except asyncio.TimeoutError:
+                except (asyncio.TimeoutError, KeyboardInterrupt, RuntimeError):
                     raise
-                except KeyboardInterrupt:
-                    raise
+                except error.HTTPRequestFailure as e:
+                    print((await e.response.read()).decode("utf-8"))
                 except Exception as e:
                     if verbose:
                         print("Ignored {}, retrying... ({}/{})".format(type(e), i+1, times))
             else:
-                raise HTTPException("Cannot send HTTP request.")
+                raise error.HTTPException("Cannot send HTTP request.")
         return new_func
     return wrapped
 
@@ -366,7 +364,7 @@ class HTTPRequest:
         params = self.update_params(params or {})
         async with self.session.get(url, headers=headers, params=params, timeout=timeout, **kwargs) as response:
             if response.status != 200:
-                raise HTTPRequestFailure(response)
+                raise error.HTTPRequestFailure(response)
             bytes_ = await response.read()
             if as_json:
                 return json_decoder(bytes_)
@@ -379,7 +377,7 @@ class HTTPRequest:
         data = self.update_params(data or {})
         async with self.session.post(url, headers=headers, data=data, timeout=timeout, **kwargs) as response:
             if response.status != 200:
-                raise HTTPRequestFailure(response)
+                raise error.HTTPRequestFailure(response)
             bytes_ = await response.read()
             if as_json:
                 return json_decoder(bytes_)
@@ -485,14 +483,14 @@ class HTTPRequest:
         if fb_dtsg:
             self.fb_dtsg = fb_dtsg["value"]
         else:
-            m = re.search(r"name=\"fb_dtsg\"\svalue=\"(.?*)\"", r.text)
+            m = re.search(r"name=\"fb_dtsg\"\svalue=\"(.?*)\"", html)
             self.fb_dtsg = m.group(1)
 
         jazoest = soup.find("input", attrs={"name": "jazoest"})
         if jazoest:
             self.jazoest = jazoest["value"]
         else:
-            m = re.search(r"name=\"jazoest\"\svalue=\"(.?*)\"", r.text)
+            m = re.search(r"name=\"jazoest\"\svalue=\"(.?*)\"", html)
             self.jazoest = m.group(1)
 
         h = soup.find("input", attrs={"name": "h"})
@@ -536,8 +534,8 @@ class HTTPRequest:
         await self.get(self.LOGOUT, params={"ref": "mb", "h": self.h})
 
     async def send_message(self, dest, ctn):
-        if not isinstance(ctn, Content):
-            ctn = Content(ctn)
+        if not isinstance(ctn, content.Content):
+            ctn = content.Content(ctn)
         otid = generate_offline_threading_id()
         data = {
             "client": self.client,
@@ -650,7 +648,7 @@ class HTTPRequest:
         if url:
             return url
         else:
-            raise UnexpectedResponse("Cannot find image url.")
+            raise error.UnexpectedResponse("Cannot find image url.")
 
     async def graphql_request(self, *queries):
         data = {}

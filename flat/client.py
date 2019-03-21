@@ -1,6 +1,4 @@
-from .http import HTTPRequest
-from .state import State
-from .error import *
+from . import http, state, error
 import asyncio
 import traceback
 import inspect
@@ -103,8 +101,8 @@ class Client:
         else:
             cookie_jar = None
 
-        self._http = HTTPRequest(loop=self.loop, cookie_jar=cookie_jar)
-        self._state = State(loop=self.loop, http=self._http, dispatch=self.dispatch, max_messages=self._max_messages)
+        self._http = http.HTTPRequest(loop=self.loop, cookie_jar=cookie_jar)
+        self._state = state.State(loop=self.loop, http=self._http, dispatch=self.dispatch, max_messages=self._max_messages)
         if not cookie_jar:
             await self._http.login(email, password)
         else:
@@ -133,7 +131,7 @@ class Client:
                 continue
             except asyncio.CancelledError:
                 return
-            except HTTPRequestFailure as e:
+            except error.HTTPRequestFailure as e:
                 stt = e.response.status
                 if stt in (502, 503):
                     self._http.change_pull_channel()
