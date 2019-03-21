@@ -35,10 +35,10 @@ class Message(base.Object):
                 node = item["node"]
                 attachment_type = node["__typename"]
                 if attachment_type == "ExtensibleMessageAttachment":
-                    embed_link = attachment.EmbedLink.from_data(node)
+                    embed_link = attachment.EmbedLink.from_data(state, node)
                     break
                 elif attachment_type == "Sticker":
-                    sticker = attachment.Sticker.from_data(node)
+                    sticker = attachment.Sticker.from_data(state, node)
                     break
                 else:
                     files.append(state._parse_file(node))
