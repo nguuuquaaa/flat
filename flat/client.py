@@ -246,6 +246,7 @@ class Client:
         print("Login as")
         print(self.user.full_name)
         print(self.user.id)
+        print("------")
 
     @property
     def user(self):
