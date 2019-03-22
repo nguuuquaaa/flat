@@ -45,9 +45,9 @@ class ImageAttachment(FileAttachment):
         }
 
     async def get_url(self):
-        if self._url is None:
-            self._url = await self._state.http.fetch_image_url(self._id)
-        return self._url
+        if self.url is None:
+            self.url = await self._state.http.fetch_image_url(self._id)
+        return self.url
 
     async def save(self):
         url = await self.get_url()
@@ -129,13 +129,13 @@ else:
     from io import BytesIO
 
     async def _to_gif(self, fp, *, executor=None, loop=None):
-        bytes_ = await self._state.http.get(self._url)
+        bytes_ = await self._state.http.get(self.url)
         im = BytesIO(bytes_)
         frames = []
-        row_count = self._row_count
-        column_count = self._column_count
-        frame_count = self._frame_count
-        duration = self._frame_rate
+        row_count = self.row_count
+        column_count = self.column_count
+        frame_count = self.frame_count
+        duration = self.frame_rate
 
         def do_stuff():
             image = Image.open(im)
