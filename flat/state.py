@@ -318,7 +318,12 @@ class State:
         deltas = payload["deltas"]
         self.dispatch("raw_reaction_add", deltas)
         for d in deltas:
-            node = d["deltaMessageReaction"]
+            try:
+                node = d["deltaMessageReaction"]
+                #there seems to be another event with this kind of payload
+                #need further testing
+            except AttributeError:
+                continue
             sender_id = node["senderId"]
             m = utils.get(self.messages, lambda m: m.id==sender_id)
             if m:
