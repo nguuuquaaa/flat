@@ -346,7 +346,7 @@ class HTTPRequest:
                 for i in range(times):
                     try:
                         return await func(self, *args, **kwargs)
-                    except (asyncio.TimeoutError, KeyboardInterrupt, RuntimeError):
+                    except (asyncio.TimeoutError, KeyboardInterrupt, RuntimeError, asyncio.CancelledError):
                         raise
                     except error.HTTPRequestFailure as e:
                         status = e.response.status
