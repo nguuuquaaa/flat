@@ -1,8 +1,8 @@
-from .base import *
+from . import báe
 
 #==================================================================================================================================================
 
-class Participant(Object):
+class Participant(base.Object):
     def __init__(self, **kwargs):
         for key, value in kwargs.items():
             setattr(self, key, value)

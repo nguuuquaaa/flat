@@ -122,7 +122,6 @@ class Client:
                 else:
                     yield 60
 
-        retry_after = retry()
         while self.is_running():
             try:
                 await self._http.ping()
@@ -131,19 +130,9 @@ class Client:
                 continue
             except asyncio.CancelledError:
                 return
-            except error.HTTPRequestFailure as e:
-                stt = e.response.status
-                if stt in (502, 503):
-                    self._http.change_pull_channel()
-                elif stt == 400:
-                    continue
-                else:
-                    traceback.print_exc()
-                    await asyncio.sleep(next(retry_after))
             except:
                 raise
             else:
-                retry_after = retry()
                 self.loop.create_task(self._state.process_raw_data(raw))
 
     #
@@ -257,7 +246,7 @@ class Client:
 
     def listen(self, func):
         if not inspect.iscoroutinefunction(func):
-            raise ("Not a coroutine.")
+            raise TypeError("Not a coroutine.")
 
         func_name = func.__name__
         if not name.startswith("on_"):

@@ -1,28 +1,27 @@
-from .base import *
-from .enums import *
+from . import base, enums
 
 #==================================================================================================================================================
 
-class _BaseUser(Object, OneToOneMixin):
+class _BaseUser(base.Object, base.OneToOneMixin):
     pass
 
 class UnavailableUser(_BaseUser):
     pass
 
-UNAVAILABLE_USER = UnavailableUser("0")
+FACEBOOK_USER = UnavailableUser("0")
 
 class User(_BaseUser):
     @classmethod
     def from_data(cls, state, data):
         if data["id"] == 0:
-            return UNAVAILABLE_USER
+            return FACEBOOK_USER
         else:
             return cls(
                 data["id"],
                 _state=state,
                 full_name=data["name"],
                 first_name=data["firstName"],
-                gender=Gender(data["gender"]),
+                gender=enums.Gender(data["gender"]),
                 alias=data["alternateName"] or None,
                 thumbnail=data["thumbSrc"],
                 url=data["uri"],
@@ -33,7 +32,7 @@ class Page(_BaseUser):
     @classmethod
     def from_data(cls, state, data):
         if data["id"] == 0:
-            return UNAVAILABLE_USER
+            return FACEBOOK_USER
         else:
             return cls(
                 data["id"],

@@ -8,3 +8,5 @@ from .user import *
 from .participant import *
 from .thread import *
 from .attachment import *
+
+__version__ = "0.0.1"

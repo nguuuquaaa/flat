@@ -5,9 +5,7 @@ def get(container, pred, default=None):
     if isinstance(pred, (int, str)):
         try:
             return container[pred]
-        except KeyboardInterrupt:
-            raise
-        except:
+        except (KeyError, IndexError):
             return default
 
     elif callable(pred):

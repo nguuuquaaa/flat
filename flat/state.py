@@ -80,7 +80,7 @@ class State:
         else:
             raise UnexpectedResponse("Unknown user type: {}".format(ttype))
 
-    async def get_user(self, user_id):
+    async def fetch_user(self, user_id):
         async with self.user_lock:
             try:
                 return self.users[user_id]
@@ -101,7 +101,7 @@ class State:
         self.users[client_user_id] = u
         return u
 
-    async def bulk_get_users(self, user_ids):
+    async def bulk_fetch_users(self, user_ids):
         async with self.user_lock:
             need_to_fetch = [uid for uid in user_ids if uid not in self.users]
             if need_to_fetch:
@@ -126,7 +126,7 @@ class State:
 
         if ttype == "ONE_TO_ONE":
             user_thread_id = data["thread_key"]["other_user_id"]
-            other_user = await self.get_user(user_thread_id)
+            other_user = await self.fetch_user(user_thread_id)
 
             t = OneToOne.from_data(self, data)
             t.store_recipient(other_user, nickname=nicks.get(user_thread_id))
@@ -136,7 +136,7 @@ class State:
         elif ttype == "GROUP":
             nodes = data["all_participants"]["nodes"]
             all_participant_ids = [n["messaging_actor"]["id"] for n in nodes]
-            all_participants = await self.bulk_get_users(all_participant_ids)
+            all_participants = await self.bulk_fetch_users(all_participant_ids)
 
             t = Group.from_data(self, data)
             admins = [a["id"] for a in data["thread_admins"]]
@@ -148,7 +148,7 @@ class State:
         else:
             raise UnexpectedResponse("Unknown thread type: {}".format(ttype))
 
-    async def get_thread(self, thread_id):
+    async def fetch_thread(self, thread_id):
         async with self.thread_lock:
             try:
                 return self.threads[thread_id]
@@ -183,7 +183,7 @@ class State:
         timestamp = datetime.fromtimestamp(int(metadata["timestamp"])/1000)
         thread_id = get_thread_id(metadata)
 
-        thread = await self.get_thread(thread_id)
+        thread = await self.fetch_thread(thread_id)
         author = thread.get_participant(author_id)
 
         return message_id, author, thread, timestamp
@@ -194,7 +194,7 @@ class State:
         message_id, author, thread, timestamp = await self.get_message_info(metadata)
 
         added_ids = (x["userFbId"] for x in delta["addedParticipants"])
-        users = await self.bulk_get_users(added_ids)
+        users = await self.bulk_fetch_users(added_ids)
         added_participants = [thread.store_participant(u) for u in users]
 
         self.dispatch("participants_added", author, thread, added_participants)
