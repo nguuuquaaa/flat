@@ -5,7 +5,7 @@ with open("requirements.txt") as f:
     requirements = f.read().splitlines()
 
 with open("flat/__init__.py") as f:
-    m = re.search(r"__version__ \= \\\"(\d+\.\d+\.\d+)\\\"", f.read())
+    m = re.search(r"__version__ \= \"(\d+\.\d+\.\d+)\"")
     version = m.group(1)
 
 setuptools.setup(
