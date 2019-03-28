@@ -27,7 +27,7 @@ class Messageable:
 
     async def send(self, content):
         raw_messages = await self._state.http.send_message(self, content)
-        return [self._state.get_send_message(rm, content) for rm in raw_messages]
+        return [await self._state.parse_send_message(rm, content) for rm in raw_messages]
 
 class OneToOneMixin(Messageable):
     def __init__(self, *args, **kwargs):

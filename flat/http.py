@@ -10,6 +10,7 @@ import time
 import json
 import re
 import functools
+import traceback
 
 #==================================================================================================================================================
 
@@ -316,6 +317,8 @@ class HTTPRequest:
             "User-Agent": user_agent or USER_AGENTS[0],
             "Connection": "keep-alive",
         }
+        self.sticky = None
+        self.pool = None
         self.cookie_jar = cookie_jar
         self.clear()
 
@@ -357,7 +360,7 @@ class HTTPRequest:
                         continue
                     except Exception as e:
                         if verbose:
-                            print("Ignored {}, retrying... ({}/{})".format(type(e), i+1, times))
+                            print("Ignoring {}\n{}Retrying... ({}/{})\n".format(type(e), "".join(traceback.format_exception(type(e), e, e.__traceback__, 5)), i+1, times))
                 else:
                     raise error.HTTPException("Cannot send HTTP request.")
             return new_func
@@ -418,7 +421,7 @@ class HTTPRequest:
         if "home" in resp.url.human_repr():
             return await self.save_login_state()
         else:
-            raise error.LoginError("Login failed, got directed to {}".formet(resp.url.human_repr()))
+            raise error.LoginError("Login failed, got directed to {}".format(resp.url.human_repr()))
 
     async def handle_2FA(self, bytes_):
         soup = BS(bytes_.decode("utf-8"), PARSER)
@@ -614,8 +617,6 @@ class HTTPRequest:
         if lb:
             self.sticky = lb["sticky"]
             self.pool = lb["pool"]
-        else:
-            raise error.HTTPException("Fetch sticky failed.")
 
     async def ping(self):
         params = {
@@ -624,24 +625,29 @@ class HTTPRequest:
             "partition": -2,
             "cap": 0,
             "uid": self.user_id,
-            "sticky_token": self.sticky,
-            "sticky_pool": self.pool,
             "viewer_uid": self.user_id,
-            "state": "active"
+            "state": "active",
+            "sticky_token": self.sticky,
+            "sticky_pool": self.pool
         }
         return await self.get(self.PING.format(self.pull_channel), params=params)
 
     async def pull(self):
         params = {
             "msgs_recv": 0,
-            "sticky_token": self.sticky,
-            "sticky_pool": self.pool,
             "clientid": self.client_id,
-            "state": "active"
+            "state": "active",
+            "sticky_token": self.sticky,
+            "sticky_pool": self.pool
         }
 
         d = await self.get(self.STICKY.format(self.pull_channel), params=params, timeout=15, as_json=True)
         self.seq = d.get("seq", "0")
+
+        lb = d.get("lb_info")
+        if lb:
+            self.sticky = lb["sticky"]
+            self.pool = lb["pool"]
 
         return d
 

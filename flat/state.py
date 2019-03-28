@@ -16,7 +16,7 @@ import copy
 
 #==================================================================================================================================================
 
-def get_thread_id(node):
+def extract_thread_id(node):
     key = node["threadKey"]
     try:
         return key["threadFbId"]
@@ -56,7 +56,7 @@ class State:
             ("delta", "DeliveryReceipt", None):                         self.process_message_delivered,
             ("delta", "ReadReceipt", None):                             self.process_message_seen,
             ("delta", "NewMessage", None):                              self.process_message,
-            ("delta", "ClientPayload", None):                           self.process_reaction_add,
+            ("delta", "ClientPayload", None):                           self.process_payload,
             "inbox":                                                    self.process_inbox,
             "typ":                                                      self.process_typing,
             "ttyp":                                                     self.process_typing,
@@ -181,7 +181,7 @@ class State:
         message_id = metadata["messageId"]
         author_id = metadata["actorFbId"]
         timestamp = datetime.fromtimestamp(int(metadata["timestamp"])/1000)
-        thread_id = get_thread_id(metadata)
+        thread_id = extract_thread_id(metadata)
 
         thread = await self.fetch_thread(thread_id)
         author = thread.get_participant(author_id)
@@ -300,35 +300,49 @@ class State:
 
     async def process_force_thread_update(self, raw_message):
         delta = raw_message["delta"]
-        thread_id = get_thread_id(delta)
+        thread_id = extract_thread_id(delta)
         thread = self.threads.get(thread_id)
         if thread:
             before, after = await self.update_thread(thread)
             self.dispatch("force_thread_update", before, after)
 
+    def get_message(self, message_id):
+        for m in self.messages:
+            if m.id == message_id:
+                return m
+        else:
+            return None
+
     async def process_message_delivered(self, raw_message):
-        pass
+        delta = raw_message["delta"]
+        thread_id = extract_thread_id(delta)
+        thread = await self.fetch_thread(thread_id)
+        self.dispatch("message_delivered", thread)
 
     async def process_message_seen(self, raw_message):
-        pass
+        delta = raw_message["delta"]
+        thread_id = extract_thread_id(delta)
+        thread = await self.fetch_thread(thread_id)
+        self.dispatch("message_seen", thread)
 
-    async def process_reaction_add(self, raw_message):
+    async def process_payload(self, raw_message):
         delta = raw_message["delta"]
         payload = json.loads(bytes(delta["payload"]))
         deltas = payload["deltas"]
         self.dispatch("raw_reaction_add", deltas)
         for d in deltas:
-            try:
+            if "deltaMessageReaction" in d:
                 node = d["deltaMessageReaction"]
-                #there seems to be another event with this kind of payload
-                #need further testing
-            except AttributeError:
-                continue
-            sender_id = node["senderId"]
-            m = utils.get(self.messages, lambda m: m.id==sender_id)
-            if m:
-                author = m.thread.get_participant(node["userId"])
-                self.dispatch("reaction_add", Reaction(node["reaction"], author=author, message=message))
+                sender_id = node["senderId"]
+                m = utils.get(self.messages, lambda m: m.id==sender_id)
+                if m:
+                    author = m.thread.get_participant(node["userId"])
+                    self.dispatch("reaction_add", Reaction(node["reaction"], author=author, message=message))
+            elif "unseenNotifCount" in d:
+                self.dispatch("unseen_notification_count", d["unseenNotifCount"])
+            elif "deltaThreadConnectivityStatusUpdate" in d:
+                #new thread create I think
+                pass
 
     async def process_message(self, raw_message):
         self.dispatch("raw_message", raw_message)
@@ -411,6 +425,9 @@ class State:
     async def process_friend_request(self, m):
         pass
 
+    async def process_friend_accepted(self, m):
+        pass
+
     async def process_qprimer(self, m):
         pass
 
@@ -420,5 +437,7 @@ class State:
     async def process_unknown_message(self, m):
         pass
 
-    def get_send_message(self, data, content):
+    async def parse_send_message(self, data, content):
+        thread_id = data["thread_fbid"] or data["other_user_fbid"]
+        await self.fetch_thread(thread_id)
         return Message.from_content(self, data, content)

@@ -2,7 +2,7 @@ from . import base, enums
 
 #==================================================================================================================================================
 
-class _BaseUser(base.Object, base.OneToOneMixin):
+class _BaseUser(base.Object):
     pass
 
 class UnavailableUser(_BaseUser):
@@ -10,7 +10,7 @@ class UnavailableUser(_BaseUser):
 
 FACEBOOK_USER = UnavailableUser("0")
 
-class User(_BaseUser):
+class User(_BaseUser, base.OneToOneMixin):
     @classmethod
     def from_data(cls, state, data):
         if data["id"] == 0:
@@ -28,7 +28,7 @@ class User(_BaseUser):
                 is_friend=data["is_friend"]
             )
 
-class Page(_BaseUser):
+class Page(_BaseUser, base.OneToOneMixin):
     @classmethod
     def from_data(cls, state, data):
         if data["id"] == 0:
