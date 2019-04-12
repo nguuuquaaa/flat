@@ -345,6 +345,7 @@ class State:
                 pass
 
     async def process_message(self, raw_message):
+        await self.http.mark_seen()
         self.dispatch("raw_message", raw_message)
         delta = raw_message["delta"]
         metadata = delta["messageMetadata"]
@@ -388,7 +389,6 @@ class State:
         )
         self.messages.append(m)
         self.dispatch("message", m)
-        await self.http.mark_seen(thread.id)
 
     def _parse_attachment(self, a):
         mercury = a["mercury"]
