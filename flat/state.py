@@ -388,6 +388,7 @@ class State:
         )
         self.messages.append(m)
         self.dispatch("message", m)
+        await self.http.mark_seen(thread.id)
 
     def _parse_attachment(self, a):
         mercury = a["mercury"]
