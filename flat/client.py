@@ -109,7 +109,7 @@ class Client:
             await self._http.save_login_state()
 
         await self._http.fetch_sticky()
-        self._user = await self._state.fetch_client_user()
+        self.user = await self._state.fetch_client_user()
         self._ready.set()
         self.dispatch("ready")
 
@@ -236,10 +236,6 @@ class Client:
         print(self.user.full_name)
         print(self.user.id)
         print("------")
-
-    @property
-    def user(self):
-        return self._user
 
     def get_thread(self, id):
         return self._state.threads.get(id)
