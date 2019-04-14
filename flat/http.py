@@ -418,10 +418,8 @@ class HTTPRequest:
         if "save-device" in resp.url.human_repr():
             resp = await self.session.get(self.SAVE_DEVICE, headers=self.headers)
 
-        if "home" in resp.url.human_repr():
-            return await self.save_login_state()
-        else:
-            raise error.LoginError("Login failed, got directed to {}".format(resp.url.human_repr()))
+        return await self.save_login_state()
+        #raise error.LoginError("Login failed, got directed to {}".format(resp.url.human_repr()))
 
     async def handle_2FA(self, bytes_):
         soup = BS(bytes_.decode("utf-8"), PARSER)
