@@ -242,7 +242,7 @@ class State:
         new_nickname = data["nickname"] or None
         target_id = data["participant_id"]
         target = thread.get_participant(target_id)
-        old_nickname, target._nickname = target._nickname, new_nickname
+        old_nickname, target.nickname = target.nickname, new_nickname
 
         self.dispatch("nickname_change", author, target, old_nickname, new_nickname)
 
@@ -252,7 +252,7 @@ class State:
         message_id, author, thread, timestamp = await self.get_message_info(metadata)
 
         new_name = delta["name"]
-        old_name, thread._name = thread._name, new_name
+        old_name, thread.name = thread.name, new_name
 
         self.dispatch("thread_name_change", author, thread, old_name, new_name)
 
@@ -263,7 +263,7 @@ class State:
 
         added_id = data["untypedData"]["TARGET_ID"]
         added_admin = thread.get_participant(added_id)
-        added_admin._admin = True
+        added_admin.admin = True
 
         self.dispatch("admin_add", author, added_admin)
 
@@ -275,7 +275,7 @@ class State:
         removed_id = data["removedAdminFbIds"][0]
         removed_admin = thread.get_participant(removed_id)
         if removed_admin:
-            removed_admin._admin = False
+            removed_admin.admin = False
 
         self.dispatch("admin_remove", author, removed_admin)
 
@@ -288,13 +288,13 @@ class State:
         if isinstance(thread, Group):
             before = copy.copy(thread)
             admins = [adm["id"] for adm in data["thread_admins"]]
-            for p in thread._participants:
-                p._admin = p.id in admins
+            for p in thread.participants:
+                p.admin = p.id in admins
             raw_image = data["image"]
             if raw_image:
-                thread._image_url = raw_image["uri"]
+                thread.image_url = raw_image["uri"]
             else:
-                thread._image_url = None
+                thread.image_url = None
 
             return before, thread
 
