@@ -34,7 +34,7 @@ class ImageAttachment(FileAttachment):
         try:
             url = node["animated_image"]["uri"]
             animated = True
-        except AttributeError:
+        except KeyError:
             url = None
             animated = False
         return {

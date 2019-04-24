@@ -467,6 +467,10 @@ class HTTPRequest:
         return await self.session.post(self.CHECKPOINT, headers=self.headers, data=data)
 
     async def save_login_state(self):
+        bytes_ = await self.get(self.BASE)
+        html = bytes_.decode("utf-8")
+        soup = BS(html, PARSER)
+
         self.params.clear()
         self.client_id = "{:x}".format(random.randrange(0x80000000))
         self.start_time = now()
@@ -478,10 +482,6 @@ class HTTPRequest:
             raise error.LoginError("Cannot find c_user cookie.")
         self.user_channel = "p_" + self.user_id
         self.ttstamp = ""
-
-        bytes_ = await self.get(self.BASE)
-        html = bytes_.decode("utf-8")
-        soup = BS(html, PARSER)
 
         fb_dtsg = soup.find("input", attrs={"name": "fb_dtsg"})
         if fb_dtsg:
