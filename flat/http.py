@@ -306,7 +306,7 @@ class HTTPRequest:
     EMBED_LINK = "https://www.facebook.com/message_share_attachment/fromURI/"
     MARK_FOLDER_AS_READ = "https://www.facebook.com/ajax/mercury/mark_folder_as_read.php?dpr=1"
 
-    def __init__(self, *, loop=None, user_agent=None, cookie_jar=None):
+    def __init__(self, *, loop=None, user_agent=None, cookie_jar=None, save_cookies=None):
         self.loop = loop or asyncio.get_event_loop()
         self.pull_channel = 0
         self.client = "mercury"
@@ -320,6 +320,7 @@ class HTTPRequest:
         self.sticky = None
         self.pool = None
         self.cookie_jar = cookie_jar
+        self.save_cookies = save_cookies
         self.clear()
 
     def change_pull_channel(self):
@@ -419,7 +420,6 @@ class HTTPRequest:
             resp = await self.session.get(self.SAVE_DEVICE, headers=self.headers)
 
         return await self.save_login_state()
-        #raise error.LoginError("Login failed, got directed to {}".format(resp.url.human_repr()))
 
     async def handle_2FA(self, bytes_):
         soup = BS(bytes_.decode("utf-8"), PARSER)
@@ -527,6 +527,8 @@ class HTTPRequest:
         self.tmp_prev = now()
         self.last_sync = now()
 
+        if self.save_cookies:
+            self.session.cookie_jar.save(self.save_cookies)
         return self.user_id
 
     async def logout(self):

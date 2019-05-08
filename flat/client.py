@@ -101,7 +101,7 @@ class Client:
         else:
             cookie_jar = None
 
-        self._http = http.HTTPRequest(loop=self.loop, cookie_jar=cookie_jar)
+        self._http = http.HTTPRequest(loop=self.loop, cookie_jar=cookie_jar, save_cookies=self._save_cookies)
         self._state = state.State(loop=self.loop, http=self._http, dispatch=self.dispatch, max_messages=self._max_messages)
         if not cookie_jar:
             await self._http.login(email, password)
